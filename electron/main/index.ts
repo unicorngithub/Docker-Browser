@@ -9,8 +9,10 @@ import os from 'node:os'
 import { installAppMenu, syncNativeThemeSource } from './appMenu'
 import { openExternalUrlIfAllowed } from './openExternalPolicy'
 import { registerDockerIpc } from './ipcDocker'
+import { registerAppUpdaterIpc, scheduleStartupUpdateCheck } from './updater'
 
 registerDockerIpc()
+registerAppUpdaterIpc()
 
 ipcMain.handle(
   'app:get-docker-runtime-env',
@@ -205,6 +207,7 @@ async function createWindow() {
 
 app.whenReady().then(() => {
   installAppMenu()
+  scheduleStartupUpdateCheck()
   createWindow()
 })
 

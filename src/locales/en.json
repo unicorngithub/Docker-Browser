@@ -248,7 +248,19 @@
     "composeRefresh": "Detect",
     "runtimeEnv": "Runtime env",
     "swarmNote": "Swarm / plugins: not managed here; use CLI or dedicated tools.",
-    "tlsNote": "Remote TLS: configure DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, then restart the app."
+    "tlsNote": "Remote TLS: configure DOCKER_HOST, DOCKER_TLS_VERIFY, DOCKER_CERT_PATH, then restart the app.",
+    "appUpdateTitle": "App updates",
+    "appVersionLabel": "App version",
+    "checkForUpdates": "Check for updates",
+    "restartToInstall": "Restart to install",
+    "devBuildHint": "Updates are only available in the installed release build (not dev).",
+    "updateChecking": "Checking for updates…",
+    "updateAvailable": "Update available: {{version}}",
+    "updateNotAvailable": "You are on the latest version.",
+    "updateProgress": "Downloading… {{percent}}%",
+    "updateDownloaded": "Update downloaded. Restart to finish installation.",
+    "updateError": "Update error: {{message}}",
+    "releaseNotes": "Release notes"
   },
   "logs": {
     "title": "Container logs",

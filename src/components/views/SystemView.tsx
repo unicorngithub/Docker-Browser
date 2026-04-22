@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { alertEngineError, formatThrownEngineError } from '@/lib/alertMessage'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
+import type { AppUpdateStatus } from '@shared/appUpdateStatus'
 
 function JsonBlock({ title, data }: { title: string; data: unknown }) {
   const str =
@@ -30,12 +31,38 @@ export function SystemView() {
   const [runtimeEnv, setRuntimeEnv] = useState<{ dockerHost: string; dockerContext: string } | null>(
     null,
   )
+  const [appMeta, setAppMeta] = useState<{ version: string; isPackaged: boolean } | null>(null)
+  const [updateLine, setUpdateLine] = useState<string>('')
+  const [updateDetail, setUpdateDetail] = useState<AppUpdateStatus | null>(null)
 
   useEffect(() => {
     void window.dockerDesktop.getDockerRuntimeEnv().then((res) => {
       if (res.ok) setRuntimeEnv(res.data)
     })
   }, [])
+
+  useEffect(() => {
+    void window.dockerDesktop.getAppVersion().then((res) => {
+      if (res.ok) setAppMeta(res.data)
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.dockerDesktop.onUpdateStatus((msg) => {
+      setUpdateDetail(msg)
+      if (msg.kind === 'checking') setUpdateLine(t('system.updateChecking'))
+      else if (msg.kind === 'available') setUpdateLine(t('system.updateAvailable', { version: msg.version }))
+      else if (msg.kind === 'not-available') setUpdateLine(t('system.updateNotAvailable'))
+      else if (msg.kind === 'progress') setUpdateLine(t('system.updateProgress', { percent: msg.percent }))
+      else if (msg.kind === 'downloaded') setUpdateLine(t('system.updateDownloaded'))
+      else if (msg.kind === 'error') setUpdateLine(t('system.updateError', { message: msg.message }))
+    })
+  }, [t])
+
+  const showRestartInstall = useMemo(
+    () => updateDetail?.kind === 'downloaded' && appMeta?.isPackaged,
+    [updateDetail, appMeta],
+  )
 
   const run = async (fn: () => Promise<void>) => {
     try {
@@ -61,6 +88,58 @@ export function SystemView() {
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden p-4">
       <h2 className="text-sm font-semibold">{t('system.title')}</h2>
+
+      <section className="rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-white/[0.06] dark:bg-zinc-900/40">
+        <h3 className="mb-2 text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
+          {t('system.appUpdateTitle')}
+        </h3>
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] text-zinc-700 dark:text-zinc-300">
+          <span className="font-medium">{t('system.appVersionLabel')}:</span>
+          <span className="font-mono">{appMeta?.version ?? '—'}</span>
+          {!appMeta?.isPackaged ? (
+            <span className="text-zinc-500 dark:text-zinc-500">({t('system.devBuildHint')})</span>
+          ) : null}
+        </div>
+        <div className="mb-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="rounded-md border border-sky-400 px-2 py-1 text-[10px] dark:border-sky-800"
+            onClick={() => {
+              void window.dockerDesktop.checkForUpdates().then(async (res) => {
+                if (!res.ok) await alert(res.error)
+              })
+            }}
+          >
+            {t('system.checkForUpdates')}
+          </button>
+          {showRestartInstall ? (
+            <button
+              type="button"
+              className="rounded-md border border-emerald-600 px-2 py-1 text-[10px] text-emerald-800 dark:border-emerald-700 dark:text-emerald-200"
+              onClick={() => {
+                void window.dockerDesktop.quitAndInstall()
+              }}
+            >
+              {t('system.restartToInstall')}
+            </button>
+          ) : null}
+        </div>
+        {updateLine ? (
+          <p className="mb-2 whitespace-pre-wrap text-[10px] leading-relaxed text-zinc-600 dark:text-zinc-400">
+            {updateLine}
+          </p>
+        ) : null}
+        {updateDetail?.kind === 'available' && updateDetail.releaseNotes ? (
+          <details className="text-[10px] text-zinc-600 dark:text-zinc-400">
+            <summary className="cursor-pointer select-none text-zinc-700 dark:text-zinc-300">
+              {t('system.releaseNotes')}
+            </summary>
+            <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-zinc-200/80 bg-zinc-50/80 p-2 font-mono dark:border-zinc-700 dark:bg-black/20">
+              {updateDetail.releaseNotes}
+            </pre>
+          </details>
+        ) : null}
+      </section>
 
       <section className="rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-white/[0.06] dark:bg-zinc-900/40">
         <h3 className="mb-2 text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">

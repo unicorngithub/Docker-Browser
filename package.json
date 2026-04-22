@@ -25,10 +25,12 @@
     "dist": "pnpm run build && electron-builder --publish never",
     "dist:dir": "pnpm run build && electron-builder --dir --publish never",
     "typecheck": "tsc --noEmit",
+    "pretest": "vite build --mode=test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "@tanstack/react-virtual": "^3.13.24",
     "dockerode": "^4.0.2",
     "i18next": "^26.0.3",

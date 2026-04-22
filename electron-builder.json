@@ -23,5 +23,10 @@
     "oneClick": false,
     "perMachine": false,
     "allowToChangeInstallationDirectory": true
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "unicorngithub",
+    "repo": "Docker-Browser"
   }
 }

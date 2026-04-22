@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 
+import type { AppUpdateStatus } from '../shared/appUpdateStatus'
 import type { DockerEventChunk } from '../shared/dockerEvents'
 import type { DockerLogsChunk } from '../shared/dockerLogs'
 import type { IpcResult } from '../shared/ipc'
@@ -120,6 +121,10 @@ export interface DockerDesktopApi {
   openPathInExplorer(p: string): Promise<IpcResult<void>>
   onLogsChunk(handler: (msg: DockerLogsChunk) => void): () => void
   onEventsChunk(handler: (msg: DockerEventChunk) => void): () => void
+  getAppVersion(): Promise<IpcResult<{ version: string; isPackaged: boolean }>>
+  checkForUpdates(): Promise<IpcResult<void>>
+  quitAndInstall(): Promise<IpcResult<void>>
+  onUpdateStatus(handler: (msg: AppUpdateStatus) => void): () => void
 }
 
 export interface AppThemeApi {

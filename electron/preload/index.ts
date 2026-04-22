@@ -4,6 +4,9 @@ import type { ThemePreference } from '../../shared/theme'
 import type { IpcResult } from '../../shared/ipc'
 import type { DockerLogsChunk } from '../../shared/dockerLogs'
 import type { DockerEventChunk } from '../../shared/dockerEvents'
+import { AppIpc } from '../../shared/appIpcChannels'
+import type { AppUpdateStatus } from '../../shared/appUpdateStatus'
+import { parseAppUpdateStatus } from '../../shared/appUpdateStatus'
 import { DockerIpc } from '../../shared/dockerIpcChannels'
 
 contextBridge.exposeInMainWorld('dockerDesktop', {
@@ -235,6 +238,23 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
     }
     ipcRenderer.on(DockerIpc.eventsChunk, wrap)
     return () => ipcRenderer.removeListener(DockerIpc.eventsChunk, wrap)
+  },
+  getAppVersion(): Promise<IpcResult<{ version: string; isPackaged: boolean }>> {
+    return ipcRenderer.invoke(AppIpc.getAppVersion)
+  },
+  checkForUpdates(): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(AppIpc.checkForUpdates)
+  },
+  quitAndInstall(): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(AppIpc.quitAndInstall)
+  },
+  onUpdateStatus(handler: (msg: AppUpdateStatus) => void): () => void {
+    const wrap = (_e: Electron.IpcRendererEvent, raw: unknown) => {
+      const m = parseAppUpdateStatus(raw)
+      if (m) handler(m)
+    }
+    ipcRenderer.on(AppIpc.updateStatusEvent, wrap)
+    return () => ipcRenderer.removeListener(AppIpc.updateStatusEvent, wrap)
   },
 })
 
