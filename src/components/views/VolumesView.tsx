@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 
 type Row = {
   Name: string
@@ -39,7 +40,8 @@ export function VolumesView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     }
   }
 
@@ -61,19 +63,12 @@ export function VolumesView() {
     })
   }
 
-  const onPrune = () => {
-    void run(async () => {
-      if (!(await confirm(t('volumes.pruneConfirm')))) return
-      await unwrapIpc(window.dockerDesktop.pruneVolumes())
-    })
-  }
-
   function shortId(id: string): string {
     return id.replace(/^sha256:/i, '').slice(0, 12)
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">{t('volumes.title')}</h2>
         <div className="flex flex-wrap gap-2">
@@ -84,14 +79,6 @@ export function VolumesView() {
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
             {t('common.removeVol')}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void onPrune()}
-            className="rounded-md border border-amber-400 px-2 py-1 text-[11px] text-amber-950 dark:border-amber-800 dark:text-amber-100"
-          >
-            {t('volumes.prune')}
           </button>
         </div>
       </div>

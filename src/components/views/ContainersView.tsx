@@ -1,17 +1,37 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+} from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useTranslation } from 'react-i18next'
+import { ContainerInspectModal } from '@/components/ContainerInspectModal'
 import { CreateContainerModal } from '@/components/CreateContainerModal'
 import { EditContainerConfigModal } from '@/components/EditContainerConfigModal'
 import { EditContainerRuntimeModal } from '@/components/EditContainerRuntimeModal'
+import { InspectJsonModal } from '@/components/InspectJsonModal'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
+import { alertEngineError, formatThrownEngineError } from '@/lib/alertMessage'
 import { localizeContainerState, localizeContainerStatus } from '@/lib/containerDisplayI18n'
 import type { ContainerPortRow } from '@/lib/containerPortsDisplay'
 import { formatContainerPortsSummary } from '@/lib/containerPortsDisplay'
-import { groupContainersByComposeProject } from '@/lib/containerProjectGroup'
-import { redactSensitiveJson } from '@shared/redactSensitiveJson'
-import { InspectJsonModal } from '@/components/InspectJsonModal'
+import {
+  getComposeWorkingDirForGroup,
+  groupContainersByComposeProject,
+} from '@/lib/containerProjectGroup'
+import {
+  ALL_CONTAINER_COLS,
+  loadColVisibility,
+  saveColVisibility,
+  type ContainerTableColId,
+} from '@/lib/containerTablePreferences'
+import { loadExecHistory, pushExecHistory } from '@/lib/execCommandHistory'
 
 type Row = {
   Id: string
@@ -23,7 +43,18 @@ type Row = {
   Labels?: Record<string, string>
 }
 
-/** 展示用短 ID：去掉 `sha256:` 前缀后取前 12 位 */
+type SortKey = 'name' | 'id' | 'image' | 'ports' | 'state' | 'status' | 'health' | null
+
+type FlatRow =
+  | {
+      kind: 'group'
+      projectKey: string
+      projectLabel: string
+      count: number
+      workdir: string | null
+    }
+  | { kind: 'container'; row: Row }
+
 function shortId(id: string): string {
   return id.replace(/^sha256:/i, '').slice(0, 12)
 }
@@ -34,25 +65,87 @@ function displayName(c: Row): string {
   return shortId(c.Id)
 }
 
+function healthRank(status: string | undefined): number {
+  const s = (status ?? '').toLowerCase()
+  if (s.includes('(healthy)')) return 3
+  if (s.includes('health: starting')) return 2
+  if (s.includes('(unhealthy)')) return 1
+  return 0
+}
+
+function healthLabel(
+  status: string | undefined,
+  t: (k: string) => string,
+): { key: 'none' | 'healthy' | 'unhealthy' | 'starting'; text: string } {
+  const s = (status ?? '').toLowerCase()
+  if (s.includes('(healthy)')) return { key: 'healthy', text: t('containers.healthHealthy') }
+  if (s.includes('(unhealthy)')) return { key: 'unhealthy', text: t('containers.healthUnhealthy') }
+  if (s.includes('health: starting')) return { key: 'starting', text: t('containers.healthStarting') }
+  return { key: 'none', text: '—' }
+}
+
+function sortRows(rows: Row[], key: SortKey, asc: boolean): Row[] {
+  if (!key) return rows
+  const dir = asc ? 1 : -1
+  const cmp = (a: Row, b: Row): number => {
+    if (key === 'name') return dir * displayName(a).localeCompare(displayName(b), undefined, { sensitivity: 'base' })
+    if (key === 'id') return dir * a.Id.localeCompare(b.Id)
+    if (key === 'image')
+      return dir * (a.Image ?? '').localeCompare(b.Image ?? '', undefined, { sensitivity: 'base' })
+    if (key === 'ports')
+      return dir *
+        formatContainerPortsSummary(a.Ports).localeCompare(formatContainerPortsSummary(b.Ports), undefined, {
+          sensitivity: 'base',
+        })
+    if (key === 'state')
+      return dir * (a.State ?? '').localeCompare(b.State ?? '', undefined, { sensitivity: 'base' })
+    if (key === 'status')
+      return dir * (a.Status ?? '').localeCompare(b.Status ?? '', undefined, { sensitivity: 'base' })
+    return dir * (healthRank(a.Status) - healthRank(b.Status))
+  }
+  return [...rows].sort(cmp)
+}
+
+const CTX_MENU_COUNT = 6
+
 export function ContainersView() {
   const { t, i18n } = useTranslation()
   const { alert, confirm } = useAppDialog()
   const [showCreate, setShowCreate] = useState(false)
   const [execCmd, setExecCmd] = useState('ls -la')
+  const [execHistoryList, setExecHistoryList] = useState(() => loadExecHistory())
+  const [execTimeoutSec, setExecTimeoutSec] = useState('120')
   const [execOut, setExecOut] = useState('')
   const [execBusy, setExecBusy] = useState(false)
-  /** 被折叠的项目 `projectKey`；不在集合内表示展开 */
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<Set<string>>(() => new Set())
   const ctxMenuRef = useRef<HTMLDivElement>(null)
+  const ctxMenuIndexRef = useRef(0)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; containerId: string } | null>(null)
+  const [ctxMenuIndex, setCtxMenuIndex] = useState(0)
   const [runtimeConfigContainerId, setRuntimeConfigContainerId] = useState<string | null>(null)
   const [recreateConfigContainerId, setRecreateConfigContainerId] = useState<string | null>(null)
-  const [inspectOpen, setInspectOpen] = useState(false)
-  const [inspectTitle, setInspectTitle] = useState('')
-  const [inspectText, setInspectText] = useState('')
+  const [inspectModal, setInspectModal] = useState<{ open: boolean; data: Record<string, unknown> | null }>({
+    open: false,
+    data: null,
+  })
+  const [statsModal, setStatsModal] = useState<{ open: boolean; title: string; text: string }>({
+    open: false,
+    title: '',
+    text: '',
+  })
   const [commitForId, setCommitForId] = useState<string | null>(null)
   const [commitRepo, setCommitRepo] = useState('my/snapshot')
   const [commitTag, setCommitTag] = useState('dev')
+  const [bulkIds, setBulkIds] = useState<Set<string>>(() => new Set())
+  const [sortKey, setSortKey] = useState<SortKey>('name')
+  const [sortAsc, setSortAsc] = useState(true)
+  const [colVis, setColVis] = useState(loadColVisibility)
+  const [colsMenuOpen, setColsMenuOpen] = useState(false)
+  const colsMenuWrapRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const selectedRowRef = useRef<HTMLDivElement | null>(null)
+  const bulkHeaderCheckboxRef = useRef<HTMLInputElement>(null)
+
   const containers = useDockerStore((s) => s.containers) as Row[]
   const busy = useDockerStore((s) => s.busy)
   const selectedContainerId = useDockerStore((s) => s.selectedContainerId)
@@ -61,10 +154,50 @@ export function ContainersView() {
 
   const sel = containers.find((c) => c.Id === selectedContainerId) ?? null
 
+  useEffect(() => {
+    saveColVisibility(colVis)
+  }, [colVis])
+
   const grouped = useMemo(
     () => groupContainersByComposeProject(containers, t('containers.projectUngrouped')),
     [containers, t, i18n.language],
   )
+
+  const sortedGrouped = useMemo(() => {
+    if (!sortKey) return grouped
+    return grouped.map((g) => ({
+      ...g,
+      items: sortRows(g.items, sortKey, sortAsc),
+    }))
+  }, [grouped, sortKey, sortAsc])
+
+  const flatRows = useMemo((): FlatRow[] => {
+    const out: FlatRow[] = []
+    for (const g of sortedGrouped) {
+      const workdir = getComposeWorkingDirForGroup(g.items)
+      out.push({
+        kind: 'group',
+        projectKey: g.projectKey,
+        projectLabel: g.projectLabel,
+        count: g.items.length,
+        workdir,
+      })
+      const open = !collapsedProjectKeys.has(g.projectKey)
+      if (open) {
+        for (const row of g.items) out.push({ kind: 'container', row })
+      }
+    }
+    return out
+  }, [sortedGrouped, collapsedProjectKeys])
+
+  const virtualizer = useVirtualizer({
+    count: flatRows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => (flatRows[i]?.kind === 'group' ? 40 : 44),
+    overscan: 12,
+    measureElement:
+      typeof window !== 'undefined' ? (el) => (el as HTMLElement).getBoundingClientRect().height : undefined,
+  })
 
   const toggleProjectOpen = (projectKey: string) => {
     setCollapsedProjectKeys((prev) => {
@@ -75,64 +208,179 @@ export function ContainersView() {
     })
   }
 
-  const isProjectOpen = (projectKey: string) => !collapsedProjectKeys.has(projectKey)
+  const toggleCol = (id: ContainerTableColId) => {
+    setColVis((v) => {
+      const next = { ...v, [id]: !v[id] }
+      const visible = ALL_CONTAINER_COLS.filter((c) => next[c]).length
+      if (visible === 0) return v
+      return next
+    })
+  }
+
+  useEffect(() => {
+    if (!colsMenuOpen) return
+    const onDoc = (e: MouseEvent) => {
+      if (colsMenuWrapRef.current?.contains(e.target as Node)) return
+      setColsMenuOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setColsMenuOpen(false)
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [colsMenuOpen])
+
+  useEffect(() => {
+    ctxMenuIndexRef.current = ctxMenuIndex
+  }, [ctxMenuIndex])
+
+  const toggleBulk = useCallback((id: string) => {
+    setBulkIds((prev) => {
+      const n = new Set(prev)
+      if (n.has(id)) n.delete(id)
+      else n.add(id)
+      return n
+    })
+  }, [])
+
+  const toggleGroupBulk = useCallback((items: Row[]) => {
+    if (items.length === 0) return
+    setBulkIds((prev) => {
+      const n = new Set(prev)
+      const allOn = items.every((c) => n.has(c.Id))
+      if (allOn) for (const c of items) n.delete(c.Id)
+      else for (const c of items) n.add(c.Id)
+      return n
+    })
+  }, [])
+
+  const toggleSelectAll = useCallback(() => {
+    setBulkIds((prev) => {
+      if (containers.length === 0) return prev
+      const allOn = containers.every((c) => prev.has(c.Id))
+      if (allOn) return new Set()
+      return new Set(containers.map((c) => c.Id))
+    })
+  }, [containers])
+
+  const clearBulk = () => setBulkIds(new Set())
+
+  const allBulkSelected = containers.length > 0 && containers.every((c) => bulkIds.has(c.Id))
+
+  useEffect(() => {
+    const el = bulkHeaderCheckboxRef.current
+    if (!el) return
+    el.indeterminate = bulkIds.size > 0 && !allBulkSelected
+  }, [bulkIds, allBulkSelected])
+
+  useEffect(() => {
+    selectedRowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [selectedContainerId, flatRows.length])
+
+  const openComposeDir = async (path: string) => {
+    const res = await window.dockerDesktop.openPathInExplorer(path)
+    if (!res.ok) await alertEngineError(alert, t, res.error)
+  }
+
+  const openLogsWindow = useCallback((containerId: string) => {
+    void window.dockerDesktop.openContainerLogsWindow(containerId).then(async (res) => {
+      if (!res.ok) await alertEngineError(alert, t, res.error)
+    })
+  }, [alert, t])
+
+  const openFilesWindow = useCallback((containerId: string) => {
+    void window.dockerDesktop.openContainerFilesWindow(containerId, '/').then(async (res) => {
+      if (!res.ok) await alertEngineError(alert, t, res.error)
+    })
+  }, [alert, t])
+
+  const openInspect = useCallback(async (id: string) => {
+    const res = await window.dockerDesktop.inspectContainer(id)
+    if (!res.ok) {
+      await alertEngineError(alert, t, res.error)
+      return
+    }
+    setInspectModal({ open: true, data: res.data as Record<string, unknown> })
+  }, [alert, t])
+
+  const openStats = useCallback(async (id: string) => {
+    const res = await window.dockerDesktop.containerStatsOnce(id)
+    if (!res.ok) {
+      await alertEngineError(alert, t, res.error)
+      return
+    }
+    setStatsModal({
+      open: true,
+      title: t('containers.statsTitle'),
+      text: JSON.stringify(res.data, null, 2),
+    })
+  }, [alert, t])
 
   useEffect(() => {
     if (!ctxMenu) return
+    setCtxMenuIndex(0)
+    ctxMenuIndexRef.current = 0
     let attached = false
     const onPointer = (e: PointerEvent) => {
       if (ctxMenuRef.current?.contains(e.target as Node)) return
       setCtxMenu(null)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setCtxMenu(null)
+      if (e.key === 'Escape') {
+        setCtxMenu(null)
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCtxMenuIndex((i) => {
+          const n = Math.min(CTX_MENU_COUNT - 1, i + 1)
+          ctxMenuIndexRef.current = n
+          return n
+        })
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCtxMenuIndex((i) => {
+          const n = Math.max(0, i - 1)
+          ctxMenuIndexRef.current = n
+          return n
+        })
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        const id = ctxMenu.containerId
+        const idx = ctxMenuIndexRef.current
+        setCtxMenu(null)
+        if (idx === 0) openLogsWindow(id)
+        else if (idx === 1) openFilesWindow(id)
+        else if (idx === 2) setRuntimeConfigContainerId(id)
+        else if (idx === 3) setRecreateConfigContainerId(id)
+        else if (idx === 4) void openInspect(id)
+        else if (idx === 5) void openStats(id)
+      }
     }
     const raf = requestAnimationFrame(() => {
       document.addEventListener('pointerdown', onPointer, true)
       attached = true
     })
-    window.addEventListener('keydown', onKey)
+    window.addEventListener('keydown', onKey, true)
     return () => {
       cancelAnimationFrame(raf)
       if (attached) document.removeEventListener('pointerdown', onPointer, true)
-      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('keydown', onKey, true)
     }
-  }, [ctxMenu])
-
-  const openLogsWindow = (containerId: string) => {
-    void window.dockerDesktop.openContainerLogsWindow(containerId).then(async (res) => {
-      if (!res.ok) await alert(res.error)
-    })
-  }
-
-  const openInspectRedacted = async (id: string) => {
-    const res = await window.dockerDesktop.inspectContainer(id)
-    if (!res.ok) {
-      await alert(res.error)
-      return
-    }
-    setInspectTitle(t('containers.inspectRedacted'))
-    setInspectText(JSON.stringify(redactSensitiveJson(res.data), null, 2))
-    setInspectOpen(true)
-  }
-
-  const openStats = async (id: string) => {
-    const res = await window.dockerDesktop.containerStatsOnce(id)
-    if (!res.ok) {
-      await alert(res.error)
-      return
-    }
-    setInspectTitle(t('containers.statsTitle'))
-    setInspectText(JSON.stringify(res.data, null, 2))
-    setInspectOpen(true)
-  }
+  }, [ctxMenu, openFilesWindow, openInspect, openLogsWindow, openStats])
 
   const exportTar = async (id: string) => {
     if (!(await confirm(t('containers.exportTarConfirm')))) return
     void run(async () => {
       const res = await window.dockerDesktop.exportContainerTar({ containerId: id })
       if (!res.ok) throw new Error(res.error)
-      await alert(res.data.filePath)
+      await alert(t('containers.exportTarDone', { path: res.data.filePath }))
     })
   }
 
@@ -157,7 +405,8 @@ export function ContainersView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     }
   }
 
@@ -173,24 +422,71 @@ export function ContainersView() {
         }),
       )
       setSelectedContainerId(null)
+      clearBulk()
     })
+  }
+
+  const onBatchRemove = async () => {
+    if (bulkIds.size === 0) return
+    if (!(await confirm(t('containers.batchRemoveConfirm', { count: bulkIds.size })))) return
+    void run(async () => {
+      for (const id of bulkIds) {
+        const c = containers.find((x) => x.Id === id)
+        const running = (c?.State ?? '').toLowerCase() === 'running'
+        await unwrapIpc(window.dockerDesktop.removeContainer({ id, force: running }))
+      }
+      clearBulk()
+      setSelectedContainerId(null)
+    })
+  }
+
+  const onBatchStart = () => {
+    if (bulkIds.size === 0) return
+    void run(async () => {
+      for (const id of bulkIds) {
+        await unwrapIpc(window.dockerDesktop.startContainer(id))
+      }
+    })
+  }
+
+  const onBatchStop = () => {
+    if (bulkIds.size === 0) return
+    void run(async () => {
+      for (const id of bulkIds) {
+        await unwrapIpc(window.dockerDesktop.stopContainer(id))
+      }
+    })
+  }
+
+  const onHeaderSort = (key: Exclude<SortKey, null>) => {
+    if (sortKey === key) setSortAsc((a) => !a)
+    else {
+      setSortKey(key)
+      setSortAsc(true)
+    }
   }
 
   const onExec = async () => {
     if (!sel) return
+    const cmd = execCmd.trim()
+    if (!cmd) return
+    pushExecHistory(cmd)
     setExecBusy(true)
     setExecOut('')
+    const ts = Number(execTimeoutSec.trim())
+    const timeoutSec = Number.isFinite(ts) && ts > 0 ? Math.min(600, Math.floor(ts)) : 0
     try {
       const res = await window.dockerDesktop.execOnce({
         containerId: sel.Id,
-        command: execCmd.trim(),
+        command: cmd,
+        timeoutSec: timeoutSec || undefined,
       })
       if (!res.ok) throw new Error(res.error)
       const exit = res.data.exitCode
       setExecOut(
-        (res.data.output || '') +
-          (typeof exit === 'number' ? `\n\n[exit ${exit}]` : ''),
+        (res.data.output || '') + (typeof exit === 'number' ? `\n\n[exit ${exit}]` : ''),
       )
+      setExecHistoryList(loadExecHistory())
     } catch (e) {
       setExecOut(e instanceof Error ? e.message : String(e))
     } finally {
@@ -198,13 +494,161 @@ export function ContainersView() {
     }
   }
 
+  const onExecCancel = () => {
+    void window.dockerDesktop.execCancelCurrent()
+  }
+
+  const copyExecOut = async () => {
+    try {
+      await navigator.clipboard.writeText(execOut)
+    } catch {
+      await alert(t('containers.copyIdFailed'))
+    }
+  }
+
+  const visibleCols = ALL_CONTAINER_COLS.filter((c) => colVis[c])
+  /** 首列复选框 + 次列展开（数据行为空），与项目组行对齐 */
+  const gridTemplate = `28px 22px ${visibleCols.map(() => 'minmax(0,1fr)').join(' ')} 2rem`
+
+  const renderHeaderCell = (id: ContainerTableColId, label: string) => {
+    if (!colVis[id]) return null
+    const active = sortKey === id
+    return (
+      <button
+        key={id}
+        type="button"
+        onClick={() => onHeaderSort(id)}
+        className={`truncate border-b border-zinc-200 px-1.5 py-2 text-left text-[11px] font-medium hover:bg-zinc-200/60 dark:border-zinc-800 dark:hover:bg-zinc-800/60 ${
+          active ? 'text-sky-700 dark:text-sky-300' : ''
+        }`}
+      >
+        {label}
+        {active ? (sortAsc ? ' ↑' : ' ↓') : ''}
+      </button>
+    )
+  }
+
+  const renderDataCells = (c: Row) => {
+    const active = c.Id === selectedContainerId
+    const portsText = formatContainerPortsSummary(c.Ports)
+    const h = healthLabel(c.Status, t)
+    const cells: ReactNode[] = []
+    if (colVis.name)
+      cells.push(
+        <div key="n" className="flex min-w-0 items-center gap-1 truncate px-1.5 py-1 font-medium">
+          <span className="inline-block w-2 shrink-0 self-stretch border-l-2 border-sky-500/35" aria-hidden />
+          <span className="truncate">{displayName(c)}</span>
+        </div>,
+      )
+    if (colVis.id)
+      cells.push(
+        <div key="i" className="flex items-center gap-0.5 px-1.5 py-1 font-mono text-[11px] text-zinc-600 dark:text-zinc-400">
+          <span className="truncate" title={c.Id}>
+            {shortId(c.Id)}
+          </span>
+          <button
+            type="button"
+            className="shrink-0 rounded p-0.5 text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-800"
+            title={t('containers.copyIdTitle')}
+            aria-label={t('containers.copyIdTitle')}
+            onClick={(e) => {
+              e.stopPropagation()
+              void navigator.clipboard.writeText(c.Id).catch(() => void alert(t('containers.copyIdFailed')))
+            }}
+          >
+            ⧉
+          </button>
+        </div>,
+      )
+    if (colVis.image)
+      cells.push(
+        <div key="im" className="truncate px-1.5 py-1 text-zinc-700 dark:text-zinc-300" title={c.Image ?? ''}>
+          {c.Image ?? '—'}
+        </div>,
+      )
+    if (colVis.ports)
+      cells.push(
+        <div
+          key="p"
+          className="max-h-10 overflow-hidden whitespace-pre-line px-1.5 py-1 font-mono text-[10px] leading-tight"
+          title={portsText || t('containers.portsNone')}
+        >
+          {portsText || '—'}
+        </div>,
+      )
+    if (colVis.state)
+      cells.push(
+        <div key="st" className="px-1.5 py-1" title={c.State ?? undefined}>
+          {localizeContainerState(c.State, t)}
+        </div>,
+      )
+    if (colVis.status)
+      cells.push(
+        <div key="su" className="truncate px-1.5 py-1 text-zinc-600 dark:text-zinc-400" title={c.Status ?? undefined}>
+          {localizeContainerStatus(c.Status, t, i18n.resolvedLanguage ?? i18n.language)}
+        </div>,
+      )
+    if (colVis.health)
+      cells.push(
+        <div
+          key="h"
+          className={`truncate px-1.5 py-1 text-[11px] ${
+            h.key === 'healthy'
+              ? 'text-emerald-700 dark:text-emerald-300'
+              : h.key === 'unhealthy'
+                ? 'text-rose-700 dark:text-rose-300'
+                : h.key === 'starting'
+                  ? 'text-amber-700 dark:text-amber-300'
+                  : 'text-zinc-500'
+          }`}
+        >
+          {h.text}
+        </div>,
+      )
+    return (
+      <div
+        key={c.Id}
+        ref={active ? selectedRowRef : undefined}
+        role="row"
+        onClick={() => setSelectedContainerId(c.Id)}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          setSelectedContainerId(c.Id)
+          setCtxMenu({ x: e.clientX, y: e.clientY, containerId: c.Id })
+        }}
+        className={`grid cursor-pointer items-center border-b border-zinc-100 text-[11px] hover:bg-sky-500/5 dark:border-zinc-800/80 dark:hover:bg-sky-500/10 ${
+          active ? 'bg-sky-500/10 dark:bg-sky-500/15' : ''
+        }`}
+        style={{ gridTemplateColumns: gridTemplate }}
+      >
+        <div className="flex items-center justify-center px-0.5" onClick={(e) => e.stopPropagation()}>
+          <input
+            type="checkbox"
+            checked={bulkIds.has(c.Id)}
+            onChange={() => toggleBulk(c.Id)}
+            aria-label={t('containers.bulkSelect')}
+          />
+        </div>
+        <div className="min-w-0" aria-hidden />
+        {cells}
+        <div className="min-w-0 border-b border-zinc-100 dark:border-zinc-800/80" aria-hidden />
+      </div>
+    )
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
+      <ContainerInspectModal
+        open={inspectModal.open}
+        title={t('containers.inspect')}
+        data={inspectModal.data}
+        onClose={() => setInspectModal({ open: false, data: null })}
+      />
       <InspectJsonModal
-        open={inspectOpen}
-        title={inspectTitle}
-        jsonText={inspectText}
-        onClose={() => setInspectOpen(false)}
+        open={statsModal.open}
+        title={statsModal.title}
+        jsonText={statsModal.text}
+        onClose={() => setStatsModal({ open: false, title: '', text: '' })}
       />
       <CreateContainerModal
         open={showCreate}
@@ -299,167 +743,205 @@ export function ContainersView() {
           </button>
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200/80 dark:border-white/[0.06]">
-        <table
-          className="w-full min-w-[820px] border-collapse text-left text-[11px]"
-          role="treegrid"
-          aria-label={t('containers.title')}
+
+      {bulkIds.size > 0 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200/80 bg-amber-50/80 px-2 py-1.5 text-[11px] dark:border-amber-900/50 dark:bg-amber-950/30">
+          <span className="font-medium text-amber-950 dark:text-amber-100">
+            {t('containers.bulkBar', { count: bulkIds.size })}
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void onBatchStart()}
+            className="rounded border border-zinc-300 bg-white px-2 py-0.5 dark:border-zinc-600 dark:bg-zinc-900"
+          >
+            {t('containers.bulkStart')}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void onBatchStop()}
+            className="rounded border border-zinc-300 bg-white px-2 py-0.5 dark:border-zinc-600 dark:bg-zinc-900"
+          >
+            {t('containers.bulkStop')}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void onBatchRemove()}
+            className="rounded border border-rose-400 bg-white px-2 py-0.5 text-rose-800 dark:border-rose-700 dark:bg-zinc-900 dark:text-rose-200"
+          >
+            {t('containers.bulkRemove')}
+          </button>
+          <button type="button" onClick={() => clearBulk()} className="text-[10px] text-zinc-600 underline dark:text-zinc-400">
+            {t('containers.bulkClear')}
+          </button>
+        </div>
+      ) : null}
+
+      <div
+        ref={scrollRef}
+        className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200/80 dark:border-white/[0.06]"
+      >
+        <div
+          className="sticky top-0 z-10 grid border-b border-zinc-200 bg-zinc-100/95 text-zinc-600 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/95 dark:text-zinc-400"
+          style={{ gridTemplateColumns: gridTemplate }}
         >
-          <thead className="sticky top-0 z-10 bg-zinc-100/95 text-zinc-600 backdrop-blur dark:bg-zinc-900/95 dark:text-zinc-400">
-            <tr>
-              <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
-                {t('common.name')}
-              </th>
-              <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
-                {t('common.id')}
-              </th>
-              <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
-                {t('common.image')}
-              </th>
-              <th
-                className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800"
-                title={t('containers.portsColumnHint')}
+          <div
+            className="flex items-center justify-center border-b border-zinc-200 py-2 dark:border-zinc-800"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <input
+              ref={bulkHeaderCheckboxRef}
+              type="checkbox"
+              disabled={containers.length === 0}
+              checked={allBulkSelected}
+              onChange={() => toggleSelectAll()}
+              title={t('containers.bulkSelectAll')}
+              aria-label={t('containers.bulkSelectAll')}
+            />
+          </div>
+          <div className="border-b border-zinc-200 py-2 dark:border-zinc-800" aria-hidden />
+          {renderHeaderCell('name', t('common.name'))}
+          {renderHeaderCell('id', t('common.id'))}
+          {renderHeaderCell('image', t('common.image'))}
+          {renderHeaderCell('ports', t('containers.portsColumnTitle'))}
+          {renderHeaderCell('state', t('common.state'))}
+          {renderHeaderCell('status', t('common.status'))}
+          {renderHeaderCell('health', t('containers.healthCol'))}
+          <div
+            ref={colsMenuWrapRef}
+            className="relative flex items-center justify-center border-b border-zinc-200 py-1 dark:border-zinc-800"
+          >
+            <button
+              type="button"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-base leading-none text-zinc-500 hover:bg-zinc-200/80 hover:text-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              aria-expanded={colsMenuOpen}
+              aria-haspopup="true"
+              title={t('containers.columnsMenu')}
+              aria-label={t('containers.columnsMenu')}
+              onClick={() => setColsMenuOpen((o) => !o)}
+            >
+              ⋯
+            </button>
+            {colsMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 top-full z-30 mt-0.5 min-w-[11rem] rounded-md border border-zinc-200 bg-white py-1.5 text-[11px] shadow-lg dark:border-zinc-600 dark:bg-zinc-900"
+                onMouseDown={(e) => e.stopPropagation()}
               >
-                {t('containers.portsColumnTitle')}
-              </th>
-              <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
-                {t('common.state')}
-              </th>
-              <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
-                {t('common.status')}
-              </th>
-            </tr>
-          </thead>
-          {grouped.map((group) => {
-            const open = isProjectOpen(group.projectKey)
-            const childrenId = `project-children-${group.projectKey}`
-            return (
-              <Fragment key={group.projectKey}>
-                <tbody>
-                  <tr className="border-b border-zinc-200 bg-zinc-200/90 dark:border-zinc-700 dark:bg-zinc-800/90">
-                    <td colSpan={6} className="p-0">
+                <div className="px-2.5 pb-1 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+                  {t('containers.columns')}
+                </div>
+                {ALL_CONTAINER_COLS.map((id) => (
+                  <label
+                    key={id}
+                    className="flex cursor-pointer items-center gap-2 px-2.5 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    <input type="checkbox" checked={colVis[id]} onChange={() => toggleCol(id)} />
+                    <span>{t(`containers.col_${id}`)}</span>
+                  </label>
+                ))}
+                <p className="mt-1 border-t border-zinc-100 px-2.5 pt-1.5 text-[9px] leading-snug text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
+                  {t('containers.virtualHint')}
+                </p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+        <div
+          className="relative"
+          style={{
+            height: `${virtualizer.getTotalSize()}px`,
+          }}
+        >
+          {virtualizer.getVirtualItems().map((v) => {
+            const fr = flatRows[v.index]
+            if (!fr) return null
+            if (fr.kind === 'group') {
+              const open = !collapsedProjectKeys.has(fr.projectKey)
+              const groupItems = sortedGrouped.find((x) => x.projectKey === fr.projectKey)?.items ?? []
+              const allInGroup = groupItems.length > 0 && groupItems.every((c) => bulkIds.has(c.Id))
+              return (
+                <div
+                  key={`g-${fr.projectKey}`}
+                  ref={virtualizer.measureElement}
+                  data-index={v.index}
+                  role="row"
+                  className="absolute left-0 right-0 top-0 grid w-full items-center border-b border-zinc-200 bg-zinc-200/90 text-[12px] font-semibold dark:border-zinc-700 dark:bg-zinc-800/90"
+                  style={{
+                    transform: `translateY(${v.start}px)`,
+                    gridTemplateColumns: gridTemplate,
+                  }}
+                >
+                  <div className="flex items-center justify-center px-0.5" onMouseDown={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      ref={(el) => {
+                        if (!el || groupItems.length === 0) return
+                        const n = groupItems.filter((c) => bulkIds.has(c.Id)).length
+                        el.indeterminate = n > 0 && n < groupItems.length
+                      }}
+                      checked={allInGroup}
+                      onChange={() => toggleGroupBulk(groupItems)}
+                      title={t('containers.selectGroup')}
+                      aria-label={t('containers.selectGroup')}
+                    />
+                  </div>
+                  <div className="flex items-center justify-center px-0.5" onMouseDown={(e) => e.stopPropagation()}>
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-400/60 bg-white/80 text-[11px] dark:border-zinc-600 dark:bg-zinc-900/80"
+                      aria-expanded={open}
+                      title={open ? t('containers.treeCollapseHint', { name: fr.projectLabel }) : t('containers.treeExpandHint', { name: fr.projectLabel })}
+                      aria-label={open ? t('containers.treeCollapseHint', { name: fr.projectLabel }) : t('containers.treeExpandHint', { name: fr.projectLabel })}
+                      onClick={() => toggleProjectOpen(fr.projectKey)}
+                    >
+                      {open ? '▼' : '▶'}
+                    </button>
+                  </div>
+                  <div className="flex min-h-0 min-w-0 items-center gap-2 px-2 py-1.5" style={{ gridColumn: '3 / -2' }}>
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 truncate text-left font-semibold"
+                      onClick={() => toggleProjectOpen(fr.projectKey)}
+                    >
+                      <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{t('containers.projectGroup')}</span>
+                      <span className="truncate font-mono text-zinc-900 dark:text-zinc-50">{fr.projectLabel}</span>
+                      <span className="shrink-0 font-normal text-zinc-500">({fr.count})</span>
+                    </button>
+                    {fr.workdir ? (
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-[11px] font-semibold tracking-tight text-zinc-800 hover:bg-zinc-300/60 dark:text-zinc-100 dark:hover:bg-zinc-700/80"
-                        onClick={() => toggleProjectOpen(group.projectKey)}
-                        aria-expanded={open}
-                        aria-controls={childrenId}
-                        id={`project-node-${group.projectKey}`}
-                        title={
-                          open
-                            ? t('containers.treeCollapseHint', { name: group.projectLabel })
-                            : t('containers.treeExpandHint', { name: group.projectLabel })
-                        }
+                        className="shrink-0 rounded border border-sky-400/60 px-1.5 py-0.5 text-[11px] font-normal text-sky-900 dark:border-sky-800 dark:text-sky-100"
+                        title={fr.workdir}
+                        onClick={() => void openComposeDir(fr.workdir!)}
                       >
-                        <span
-                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border border-zinc-400/60 bg-white/80 text-[10px] text-zinc-600 dark:border-zinc-600 dark:bg-zinc-900/80 dark:text-zinc-300"
-                          aria-hidden
-                        >
-                          {open ? '▼' : '▶'}
-                        </span>
-                        <span className="text-zinc-500 dark:text-zinc-400">{t('containers.projectGroup')}</span>
-                        <span className="font-mono text-zinc-900 dark:text-zinc-50">{group.projectLabel}</span>
-                        <span className="font-normal text-zinc-500 dark:text-zinc-400">({group.items.length})</span>
+                        {t('containers.openComposeDir')}
                       </button>
-                    </td>
-                  </tr>
-                </tbody>
-                <tbody id={childrenId} hidden={!open}>
-                  {group.items.map((c) => {
-                    const active = c.Id === selectedContainerId
-                    const portsText = formatContainerPortsSummary(c.Ports)
-                    return (
-                      <tr
-                        key={c.Id}
-                        onClick={() => setSelectedContainerId(c.Id)}
-                        onContextMenu={(e) => {
-                          e.preventDefault()
-                          setSelectedContainerId(c.Id)
-                          setCtxMenu({ x: e.clientX, y: e.clientY, containerId: c.Id })
-                        }}
-                        className={`cursor-pointer border-b border-zinc-100 hover:bg-sky-500/5 dark:border-zinc-800/80 dark:hover:bg-sky-500/10 ${
-                          active ? 'bg-sky-500/10 dark:bg-sky-500/15' : ''
-                        }`}
-                        role="row"
-                      >
-                      <td className="select-text px-2 py-1.5 pl-4 font-medium text-zinc-900 dark:text-zinc-100">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="inline-block w-3 shrink-0 self-stretch border-l-2 border-sky-500/35 dark:border-sky-400/30"
-                            aria-hidden
-                          />
-                          <span>{displayName(c)}</span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <div className="flex max-w-[200px] items-center gap-0.5">
-                          <span
-                            className="select-text font-mono text-[10px] text-zinc-600 dark:text-zinc-400"
-                            title={c.Id}
-                          >
-                            {shortId(c.Id)}
-                          </span>
-                          <button
-                            type="button"
-                            className="shrink-0 rounded p-0.5 text-zinc-500 hover:bg-zinc-200 hover:text-zinc-800 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
-                            title={t('containers.copyIdTitle')}
-                            aria-label={t('containers.copyIdTitle')}
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              void (async () => {
-                                try {
-                                  await navigator.clipboard.writeText(c.Id)
-                                } catch {
-                                  await alert(t('containers.copyIdFailed'))
-                                }
-                              })()
-                            }}
-                          >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="14"
-                              height="14"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden
-                            >
-                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                            </svg>
-                          </button>
-                        </div>
-                      </td>
-                      <td className="max-w-[min(260px,32vw)] truncate px-2 py-1.5 text-zinc-700 select-text dark:text-zinc-300">
-                        {c.Image ?? '—'}
-                      </td>
-                      <td
-                        className="max-w-[min(240px,32vw)] whitespace-pre-line px-2 py-1.5 align-top font-mono text-[10px] leading-snug text-zinc-700 dark:text-zinc-300"
-                        title={portsText || t('containers.portsNone')}
-                      >
-                        {portsText || '—'}
-                      </td>
-                      <td className="px-2 py-1.5" title={c.State ?? undefined}>
-                        {localizeContainerState(c.State, t)}
-                      </td>
-                      <td
-                        className="px-2 py-1.5 text-zinc-600 dark:text-zinc-400"
-                        title={c.Status ?? undefined}
-                      >
-                        {localizeContainerStatus(c.Status, t, i18n.resolvedLanguage ?? i18n.language)}
-                      </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </Fragment>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0" aria-hidden />
+                </div>
+              )
+            }
+            return (
+              <div
+                key={fr.row.Id}
+                ref={virtualizer.measureElement}
+                data-index={v.index}
+                style={{
+                  transform: `translateY(${v.start}px)`,
+                }}
+                className="absolute left-0 right-0 top-0 w-full"
+              >
+                {renderDataCells(fr.row)}
+              </div>
             )
           })}
-        </table>
+        </div>
       </div>
+
       {sel ? (
         <div
           className="shrink-0 rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-white/[0.06] dark:bg-zinc-900/40"
@@ -469,22 +951,6 @@ export function ContainersView() {
           }}
         >
           <div className="mb-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void openInspectRedacted(sel.Id)}
-              className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
-            >
-              {t('containers.inspectRedacted')}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void openStats(sel.Id)}
-              className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
-            >
-              {t('containers.statsOnce')}
-            </button>
             <button
               type="button"
               disabled={busy}
@@ -547,12 +1013,30 @@ export function ContainersView() {
           </h3>
           <p className="mb-2 text-[10px] text-zinc-500">{t('containers.execHint')}</p>
           <div className="flex flex-wrap items-end gap-2">
-            <input
-              value={execCmd}
-              onChange={(e) => setExecCmd(e.target.value)}
-              className="min-w-[200px] flex-1 rounded-md border border-zinc-300 bg-white px-2 py-1.5 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
-              placeholder="ls -la"
-            />
+            <div className="flex min-w-[200px] flex-1 flex-col gap-1">
+              <textarea
+                value={execCmd}
+                onChange={(e) => setExecCmd(e.target.value)}
+                rows={2}
+                className="w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
+                placeholder="ls -la"
+                {...({ list: 'exec-cmd-history' } as TextareaHTMLAttributes<HTMLTextAreaElement>)}
+              />
+              <datalist id="exec-cmd-history">
+                {execHistoryList.map((h) => (
+                  <option key={h} value={h} />
+                ))}
+              </datalist>
+            </div>
+            <label className="flex flex-col gap-0.5 text-[10px] text-zinc-500">
+              <span>{t('containers.execTimeout')}</span>
+              <input
+                value={execTimeoutSec}
+                onChange={(e) => setExecTimeoutSec(e.target.value)}
+                className="w-16 rounded border border-zinc-300 bg-white px-1 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+                inputMode="numeric"
+              />
+            </label>
             <button
               type="button"
               disabled={execBusy || !execCmd.trim()}
@@ -560,6 +1044,22 @@ export function ContainersView() {
               className="rounded-md bg-sky-600 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
             >
               {execBusy ? t('common.loading') : t('containers.execRun')}
+            </button>
+            <button
+              type="button"
+              disabled={!execBusy}
+              onClick={() => onExecCancel()}
+              className="rounded-md border border-zinc-300 px-2 py-1.5 text-[11px] dark:border-zinc-600 dark:bg-zinc-900"
+            >
+              {t('containers.execCancel')}
+            </button>
+            <button
+              type="button"
+              disabled={!execOut}
+              onClick={() => void copyExecOut()}
+              className="rounded-md border border-zinc-300 px-2 py-1.5 text-[11px] dark:border-zinc-600 dark:bg-zinc-900"
+            >
+              {t('containers.execCopy')}
             </button>
           </div>
           {execOut ? (
@@ -569,6 +1069,7 @@ export function ContainersView() {
           ) : null}
         </div>
       ) : null}
+
       {ctxMenu ? (
         <div
           ref={ctxMenuRef}
@@ -580,19 +1081,42 @@ export function ContainersView() {
           <button
             type="button"
             role="menuitem"
-            className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className={`block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 ${ctxMenuIndex === 0 ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+            onMouseEnter={() => {
+              ctxMenuIndexRef.current = 0
+              setCtxMenuIndex(0)
+            }}
             onClick={() => {
-              void openInspectRedacted(ctxMenu.containerId)
+              openLogsWindow(ctxMenu.containerId)
               setCtxMenu(null)
             }}
           >
-            {t('containers.inspectRedacted')}
+            {t('logs.title')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 ${ctxMenuIndex === 1 ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+            onMouseEnter={() => {
+              ctxMenuIndexRef.current = 1
+              setCtxMenuIndex(1)
+            }}
+            onClick={() => {
+              openFilesWindow(ctxMenu.containerId)
+              setCtxMenu(null)
+            }}
+          >
+            {t('files.title')}
           </button>
           <button
             type="button"
             role="menuitem"
             title={t('containers.contextConfigInPlaceHint')}
-            className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className={`block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 ${ctxMenuIndex === 2 ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+            onMouseEnter={() => {
+              ctxMenuIndexRef.current = 2
+              setCtxMenuIndex(2)
+            }}
             onClick={() => {
               setRuntimeConfigContainerId(ctxMenu.containerId)
               setCtxMenu(null)
@@ -604,7 +1128,11 @@ export function ContainersView() {
             type="button"
             role="menuitem"
             title={t('containers.contextConfigRecreateHint')}
-            className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className={`block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 ${ctxMenuIndex === 3 ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+            onMouseEnter={() => {
+              ctxMenuIndexRef.current = 3
+              setCtxMenuIndex(3)
+            }}
             onClick={() => {
               setRecreateConfigContainerId(ctxMenu.containerId)
               setCtxMenu(null)
@@ -615,13 +1143,32 @@ export function ContainersView() {
           <button
             type="button"
             role="menuitem"
-            className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            className={`block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 ${ctxMenuIndex === 4 ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+            onMouseEnter={() => {
+              ctxMenuIndexRef.current = 4
+              setCtxMenuIndex(4)
+            }}
             onClick={() => {
-              openLogsWindow(ctxMenu.containerId)
+              void openInspect(ctxMenu.containerId)
               setCtxMenu(null)
             }}
           >
-            {t('logs.title')}
+            {t('containers.inspect')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800 ${ctxMenuIndex === 5 ? 'bg-zinc-100 dark:bg-zinc-800' : ''}`}
+            onMouseEnter={() => {
+              ctxMenuIndexRef.current = 5
+              setCtxMenuIndex(5)
+            }}
+            onClick={() => {
+              void openStats(ctxMenu.containerId)
+              setCtxMenu(null)
+            }}
+          >
+            {t('containers.statsOnce')}
           </button>
         </div>
       ) : null}

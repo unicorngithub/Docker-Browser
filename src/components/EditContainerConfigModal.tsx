@@ -4,6 +4,7 @@ import { inspectJsonToPublishText } from '@shared/inspectPorts'
 import { normalizeRestartPolicyName, type RestartPolicyName } from '@shared/restartPolicy'
 import { RestartPolicyField } from '@/components/RestartPolicyField'
 import { useAppDialog } from '@/dialog/AppDialogContext'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 
 type Props = {
   open: boolean
@@ -74,7 +75,8 @@ export function EditContainerConfigModal({ open, containerId, onClose, onRecreat
       onRecreated(res.data.id)
       onClose()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     } finally {
       setSubmitting(false)
     }
@@ -137,7 +139,7 @@ export function EditContainerConfigModal({ open, containerId, onClose, onRecreat
               onChange={(e) => setEnvText(e.target.value)}
               disabled={!!loadErr}
               rows={3}
-              placeholder={'FOO=bar\nBAZ=1'}
+              placeholder={t('create.envPlaceholder')}
               className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
             />
           </label>

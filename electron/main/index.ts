@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import type { AppLanguage } from '../../shared/locale'
 import type { ThemePreference } from '../../shared/theme'
 import { ipcErr, ipcOk, type IpcResult } from '../../shared/ipc'
@@ -21,6 +21,18 @@ ipcMain.handle(
     })
   },
 )
+
+ipcMain.handle('app:open-path', async (_evt, rawPath: unknown): Promise<IpcResult<void>> => {
+  if (typeof rawPath !== 'string' || !rawPath.trim()) return ipcErr('path is required')
+  const p = rawPath.trim()
+  try {
+    const err = await shell.openPath(p)
+    if (err) return ipcErr(err)
+    return ipcOk(undefined)
+  } catch (e) {
+    return ipcErr(e instanceof Error ? e.message : String(e))
+  }
+})
 
 ipcMain.handle('app:get-compose-version', async (): Promise<IpcResult<string>> => {
   try {
@@ -84,6 +96,7 @@ function createLogWindow(containerId: string) {
     height: 640,
     minWidth: 400,
     minHeight: 280,
+    autoHideMenuBar: true,
     icon: path.join(process.env.VITE_PUBLIC ?? '', 'icon.png'),
     webPreferences: {
       preload,
@@ -91,6 +104,7 @@ function createLogWindow(containerId: string) {
       contextIsolation: true,
     },
   })
+  logWin.setMenu(null)
 
   const hash = `logs?containerId=${encodeURIComponent(containerId)}`
   if (VITE_DEV_SERVER_URL) {
@@ -109,6 +123,49 @@ ipcMain.handle('app:open-container-logs-window', (_evt, containerId: unknown) =>
   if (typeof containerId !== 'string' || !containerId.trim()) return Promise.resolve(ipcErr('invalid container id'))
   try {
     createLogWindow(containerId.trim())
+    return Promise.resolve(ipcOk(undefined))
+  } catch (e) {
+    return Promise.resolve(ipcErr(e instanceof Error ? e.message : String(e)))
+  }
+})
+
+function createFilesWindow(containerId: string, initialPath = '/') {
+  const w = new BrowserWindow({
+    title: 'Docker Browser',
+    width: 920,
+    height: 640,
+    minWidth: 400,
+    minHeight: 280,
+    autoHideMenuBar: true,
+    icon: path.join(process.env.VITE_PUBLIC ?? '', 'icon.png'),
+    webPreferences: {
+      preload,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+  w.setMenu(null)
+  const pathQ = encodeURIComponent(initialPath.startsWith('/') ? initialPath : `/${initialPath}`)
+  const hash = `files?containerId=${encodeURIComponent(containerId)}&path=${pathQ}`
+  if (VITE_DEV_SERVER_URL) {
+    void w.loadURL(`${VITE_DEV_SERVER_URL}#${hash}`)
+  } else {
+    void w.loadFile(indexHtml, { hash })
+  }
+  w.webContents.setWindowOpenHandler(({ url }) => {
+    void openExternalUrlIfAllowed(url)
+    return { action: 'deny' }
+  })
+}
+
+ipcMain.handle('app:open-container-files-window', (_evt, payload: unknown) => {
+  const p = payload as { containerId?: string; initialPath?: string }
+  const id = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+  if (!id) return Promise.resolve(ipcErr('invalid container id'))
+  const initial =
+    typeof p.initialPath === 'string' && p.initialPath.trim() ? p.initialPath.trim() : '/'
+  try {
+    createFilesWindow(id, initial)
     return Promise.resolve(ipcOk(undefined))
   } catch (e) {
     return Promise.resolve(ipcErr(e instanceof Error ? e.message : String(e)))

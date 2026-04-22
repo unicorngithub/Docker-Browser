@@ -46,7 +46,7 @@ export default function App() {
         <div className="flex min-h-0 flex-1">
           <SideNav />
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            <div className="relative min-h-0 flex-1 overflow-hidden">
+            <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
               {busy && tab !== 'system' && tab !== 'events' ? (
                 <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-white/40 text-xs dark:bg-zinc-950/40">
                   {t('common.loading')}

@@ -19,6 +19,11 @@ export function syncNativeThemeSource(pref: ThemePreference): void {
 let menuTheme: ThemePreference = 'system'
 let menuLang: AppLanguage = getDefaultAppLanguage()
 
+/** 与原生菜单、Electron 文件对话框文案同步 */
+export function getAppMenuLanguage(): AppLanguage {
+  return menuLang
+}
+
 function shellStrings(): AppShellStrings {
   return getAppShellStrings(menuLang)
 }

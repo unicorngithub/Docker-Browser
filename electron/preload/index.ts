@@ -94,10 +94,15 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
   tagImage(payload: { source: string; repo: string; tag?: string }): Promise<IpcResult<void>> {
     return ipcRenderer.invoke(DockerIpc.tagImage, payload)
   },
-  execOnce(payload: { containerId: string; command: string }): Promise<
-    IpcResult<{ output: string; exitCode?: number }>
-  > {
+  execOnce(payload: {
+    containerId: string
+    command: string
+    timeoutSec?: number
+  }): Promise<IpcResult<{ output: string; exitCode?: number }>> {
     return ipcRenderer.invoke(DockerIpc.execOnce, payload)
+  },
+  execCancelCurrent(): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.execCancelCurrent)
   },
   startEvents(opts?: { sinceUnix?: number }): Promise<IpcResult<{ subscriptionId: string }>> {
     return ipcRenderer.invoke(DockerIpc.eventsStart, opts)
@@ -128,26 +133,38 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
   openContainerLogsWindow(containerId: string): Promise<IpcResult<void>> {
     return ipcRenderer.invoke('app:open-container-logs-window', containerId)
   },
+  openContainerFilesWindow(containerId: string, initialPath?: string): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke('app:open-container-files-window', { containerId, initialPath })
+  },
+  containerFsList(payload: {
+    containerId: string
+    path: string
+  }): Promise<IpcResult<{ entries: { name: string; type: 'file' | 'directory'; size: number }[] }>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsList, payload)
+  },
+  containerFsReadFile(payload: {
+    containerId: string
+    path: string
+  }): Promise<IpcResult<{ base64: string }>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsReadFile, payload)
+  },
+  containerFsWriteFile(payload: { containerId: string; path: string; base64: string }): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsWriteFile, payload)
+  },
+  containerFsRm(payload: { containerId: string; path: string }): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsRm, payload)
+  },
+  containerFsMkdir(payload: { containerId: string; path: string }): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsMkdir, payload)
+  },
+  containerFsDownload(payload: { containerId: string; path: string }): Promise<IpcResult<{ filePath: string }>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsDownload, payload)
+  },
+  containerFsUpload(payload: { containerId: string; destDir: string }): Promise<IpcResult<{ files: string[] }>> {
+    return ipcRenderer.invoke(DockerIpc.containerFsUpload, payload)
+  },
   openEngineDocs(): Promise<IpcResult<void>> {
     return ipcRenderer.invoke(DockerIpc.openDocs)
-  },
-  pruneContainers(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke(DockerIpc.pruneContainers)
-  },
-  pruneImages(opts?: { danglingOnly?: boolean }): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke(DockerIpc.pruneImages, opts ?? {})
-  },
-  pruneNetworks(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke(DockerIpc.pruneNetworks)
-  },
-  pruneVolumes(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke(DockerIpc.pruneVolumes)
-  },
-  pruneBuilder(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke(DockerIpc.pruneBuilder)
-  },
-  systemPrune(opts?: { volumes?: boolean; allImages?: boolean }): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke(DockerIpc.systemPrune, opts ?? {})
   },
   createNetwork(payload: { name: string; driver?: string }): Promise<IpcResult<{ id: string }>> {
     return ipcRenderer.invoke(DockerIpc.createNetwork, payload)
@@ -199,6 +216,9 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
   },
   getComposeVersion(): Promise<IpcResult<string>> {
     return ipcRenderer.invoke('app:get-compose-version')
+  },
+  openPathInExplorer(p: string): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke('app:open-path', p)
   },
   onLogsChunk(handler: (msg: DockerLogsChunk) => void): () => void {
     const wrap = (_e: Electron.IpcRendererEvent, msg: unknown) => {

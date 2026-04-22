@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { InspectJsonModal } from '@/components/InspectJsonModal'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 
 type Row = {
   Id: string
@@ -14,6 +15,11 @@ type Row = {
 
 function shortId(id: string): string {
   return id.replace(/^sha256:/, '').slice(0, 12)
+}
+
+function imageApiName(im: Row): string {
+  const t = im.RepoTags?.filter(Boolean)
+  return t?.[0] ?? im.Id
 }
 
 function formatBytes(n: number | undefined): string {
@@ -43,16 +49,39 @@ export function ImagesView() {
   const [tagging, setTagging] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyText, setHistoryText] = useState('[]')
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set())
+  const headerCheckboxRef = useRef<HTMLInputElement>(null)
 
   const sel = images.find((im) => im.Id === selectedImageRef) ?? null
-  const imageNameForApi = sel?.RepoTags?.[0] ?? sel?.Id ?? ''
+  const imageNameForApi = sel ? imageApiName(sel) : ''
+
+  useEffect(() => {
+    setCheckedIds((prev) => {
+      const valid = new Set(images.map((i) => i.Id))
+      const next = new Set<string>()
+      for (const id of prev) if (valid.has(id)) next.add(id)
+      return next
+    })
+  }, [images])
+
+  const allSelected = useMemo(
+    () => images.length > 0 && images.every((i) => checkedIds.has(i.Id)),
+    [images, checkedIds],
+  )
+
+  useEffect(() => {
+    const el = headerCheckboxRef.current
+    if (!el) return
+    el.indeterminate = checkedIds.size > 0 && !allSelected
+  }, [checkedIds, allSelected])
 
   const run = async (fn: () => Promise<void>) => {
     try {
       await fn()
       await afterMutation()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     }
   }
 
@@ -69,12 +98,19 @@ export function ImagesView() {
     })
   }
 
-  const onRemove = async () => {
-    if (!sel || !imageNameForApi) return
-    if (!(await confirm(t('images.removeConfirm')))) return
+  const onRemoveSelected = async () => {
+    if (checkedIds.size === 0) return
+    if (!(await confirm(t('images.removeBulkConfirm', { count: checkedIds.size })))) return
+    const ids = [...checkedIds]
+    const primary = selectedImageRef
     void run(async () => {
-      await unwrapIpc(window.dockerDesktop.removeImage({ name: imageNameForApi, force: false }))
-      setSelectedImageRef(null)
+      for (const id of ids) {
+        const im = images.find((x) => x.Id === id)
+        if (!im) continue
+        await unwrapIpc(window.dockerDesktop.removeImage({ name: imageApiName(im), force: false }))
+      }
+      setCheckedIds(new Set())
+      if (primary && ids.includes(primary)) setSelectedImageRef(null)
     })
   }
 
@@ -98,19 +134,10 @@ export function ImagesView() {
     })
   }
 
-  const onPruneDangling = () => {
-    void run(async () => {
-      if (!(await confirm(t('images.pruneDanglingConfirm')))) return
-      await unwrapIpc(window.dockerDesktop.pruneImages({ danglingOnly: true }))
-    })
-  }
-
   const onSaveTar = () => {
     if (!imageNameForApi) return
     void run(async () => {
-      const res = await window.dockerDesktop.saveImageTar({ name: imageNameForApi })
-      if (!res.ok) throw new Error(res.error)
-      await alert(res.data.filePath)
+      await unwrapIpc(window.dockerDesktop.saveImageTar({ name: imageNameForApi }))
     })
   }
 
@@ -130,15 +157,29 @@ export function ImagesView() {
     })
   }
 
+  const toggleChecked = (id: string, next: boolean) => {
+    setCheckedIds((prev) => {
+      const n = new Set(prev)
+      if (next) n.add(id)
+      else n.delete(id)
+      return n
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (allSelected) setCheckedIds(new Set())
+    else setCheckedIds(new Set(images.map((i) => i.Id)))
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
       <InspectJsonModal
         open={historyOpen}
         title={t('images.historyTitle')}
         jsonText={historyText}
         onClose={() => setHistoryOpen(false)}
       />
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">{t('images.title')}</h2>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -157,27 +198,11 @@ export function ImagesView() {
           </button>
           <button
             type="button"
-            disabled={!sel || busy}
-            onClick={() => void onRemove()}
+            disabled={checkedIds.size === 0 || busy}
+            onClick={() => void onRemoveSelected()}
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
-            {t('images.remove')}
-          </button>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => void onPruneDangling()}
-            className="rounded-md border border-amber-400 px-2 py-1 text-[11px] text-amber-950 dark:border-amber-800 dark:text-amber-100"
-          >
-            {t('images.pruneDangling')}
-          </button>
-          <button
-            type="button"
-            disabled={!sel || busy || !imageNameForApi}
-            onClick={() => void onSaveTar()}
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] dark:border-zinc-600"
-          >
-            {t('images.saveTar')}
+            {t('images.removeSelected')}
           </button>
           <button
             type="button"
@@ -187,52 +212,73 @@ export function ImagesView() {
           >
             {t('images.loadTar')}
           </button>
-          <button
-            type="button"
-            disabled={!sel || busy || !imageNameForApi}
-            onClick={() => void onHistory()}
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] dark:border-zinc-600"
-          >
-            {t('images.history')}
-          </button>
         </div>
       </div>
       {sel && imageNameForApi ? (
-        <div className="flex flex-wrap items-end gap-2 rounded-lg border border-zinc-200/70 bg-zinc-50/80 p-2 text-[11px] dark:border-white/[0.06] dark:bg-zinc-900/50">
-          <span className="self-center text-zinc-500">{t('images.tagSource')}</span>
-          <code className="max-w-[200px] truncate rounded bg-zinc-200/80 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-800">
+        <div className="flex min-w-0 shrink-0 flex-nowrap items-center gap-x-2 gap-y-1 overflow-x-auto rounded-lg border border-zinc-200/70 bg-zinc-50/80 px-2 py-1.5 text-[11px] dark:border-white/[0.06] dark:bg-zinc-900/50">
+          <span className="shrink-0 whitespace-nowrap text-zinc-500">{t('images.tagSource')}</span>
+          <code
+            className="max-w-[min(42vw,14rem)] shrink truncate rounded bg-zinc-200/80 px-1 py-0.5 font-mono text-[10px] dark:bg-zinc-800"
+            title={imageNameForApi}
+          >
             {imageNameForApi}
           </code>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-zinc-500">{t('images.tagRepo')}</span>
-            <input
-              value={tagRepo}
-              onChange={(e) => setTagRepo(e.target.value)}
-              className="w-40 rounded border border-zinc-300 bg-white px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
-            />
-          </label>
-          <label className="flex flex-col gap-0.5">
-            <span className="text-[10px] text-zinc-500">{t('images.tagLabel')}</span>
-            <input
-              value={tagTag}
-              onChange={(e) => setTagTag(e.target.value)}
-              className="w-28 rounded border border-zinc-300 bg-white px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
-            />
-          </label>
+          <span className="shrink-0 whitespace-nowrap text-zinc-500">{t('images.tagRepo')}</span>
+          <input
+            value={tagRepo}
+            onChange={(e) => setTagRepo(e.target.value)}
+            className="w-36 shrink-0 rounded border border-zinc-300 bg-white px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+          />
+          <span className="shrink-0 whitespace-nowrap text-zinc-500">{t('images.tagLabel')}</span>
+          <input
+            value={tagTag}
+            onChange={(e) => setTagTag(e.target.value)}
+            className="w-24 shrink-0 rounded border border-zinc-300 bg-white px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+          />
           <button
             type="button"
             disabled={busy || tagging || !tagRepo.trim()}
             onClick={onTag}
-            className="rounded-md border border-zinc-400 bg-white px-2 py-1 font-medium dark:border-zinc-500 dark:bg-zinc-800"
+            className="shrink-0 rounded-md border border-zinc-400 bg-white px-2 py-1 font-medium dark:border-zinc-500 dark:bg-zinc-800"
           >
             {tagging ? t('common.loading') : t('images.tagAction')}
           </button>
+          <span className="min-w-0 flex-1" aria-hidden />
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              disabled={!imageNameForApi || busy}
+              onClick={() => void onHistory()}
+              className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-600"
+            >
+              {t('images.history')}
+            </button>
+            <button
+              type="button"
+              disabled={!imageNameForApi || busy}
+              onClick={() => void onSaveTar()}
+              className="shrink-0 rounded-md border border-zinc-300 px-2 py-1 dark:border-zinc-600"
+            >
+              {t('images.saveTar')}
+            </button>
+          </div>
         </div>
       ) : null}
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200/80 dark:border-white/[0.06]">
         <table className="w-full min-w-[640px] border-collapse text-left text-[11px]">
           <thead className="sticky top-0 z-10 bg-zinc-100/95 text-zinc-600 backdrop-blur dark:bg-zinc-900/95 dark:text-zinc-400">
             <tr>
+              <th className="w-9 border-b border-zinc-200 px-1 py-2 dark:border-zinc-800">
+                <input
+                  ref={headerCheckboxRef}
+                  type="checkbox"
+                  className="align-middle"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  title={t('common.selectAll')}
+                  aria-label={t('common.selectAll')}
+                />
+              </th>
               <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
                 {t('common.tags')}
               </th>
@@ -248,6 +294,7 @@ export function ImagesView() {
             {images.map((im) => {
               const active = im.Id === selectedImageRef
               const tags = im.RepoTags?.filter(Boolean).join(', ') || `<${shortId(im.Id)}>`
+              const checked = checkedIds.has(im.Id)
               return (
                 <tr
                   key={im.Id}
@@ -256,9 +303,24 @@ export function ImagesView() {
                     active ? 'bg-sky-500/10 dark:bg-sky-500/15' : ''
                   }`}
                 >
-                  <td className="px-2 py-1.5 text-zinc-900 dark:text-zinc-100">{tags}</td>
-                  <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-400">{shortId(im.Id)}</td>
-                  <td className="px-2 py-1.5">{formatBytes(im.Size)}</td>
+                  <td className="px-1 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="align-middle"
+                      checked={checked}
+                      onChange={(e) => {
+                        e.stopPropagation()
+                        toggleChecked(im.Id, e.target.checked)
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={tags}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 align-middle text-zinc-900 dark:text-zinc-100">{tags}</td>
+                  <td className="px-2 py-1.5 align-middle font-mono text-zinc-600 dark:text-zinc-400">
+                    {shortId(im.Id)}
+                  </td>
+                  <td className="px-2 py-1.5 align-middle">{formatBytes(im.Size)}</td>
                 </tr>
               )
             })}

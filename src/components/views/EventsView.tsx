@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
+import { alertEngineError } from '@/lib/alertMessage'
 
 const MAX_LINES = 400
 
@@ -80,7 +81,7 @@ export function EventsView() {
     const sinceUnix = Math.floor(Date.now() / 1000) - 120
     const res = await window.dockerDesktop.startEvents({ sinceUnix })
     if (!res.ok) {
-      await alert(res.error)
+      await alertEngineError(alert, t, res.error)
       return
     }
     subRef.current = res.data.subscriptionId
@@ -89,7 +90,7 @@ export function EventsView() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold">{t('events.title')}</h2>

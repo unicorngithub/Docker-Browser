@@ -1,4 +1,5 @@
 const COMPOSE_PROJECT_LABEL = 'com.docker.compose.project'
+export const COMPOSE_PROJECT_WORKING_DIR = 'com.docker.compose.project.working_dir'
 const UNGROUPED_KEY = '__ungrouped__'
 
 export function getComposeProjectName(labels: Record<string, string> | undefined): string | null {
@@ -7,6 +8,25 @@ export function getComposeProjectName(labels: Record<string, string> | undefined
   if (typeof raw !== 'string') return null
   const v = raw.trim()
   return v.length ? v : null
+}
+
+/** Compose v2 常见标签：项目工作目录（用于在资源管理器中打开）。 */
+export function getComposeWorkingDir(labels: Record<string, string> | undefined): string | null {
+  if (!labels) return null
+  const raw = labels[COMPOSE_PROJECT_WORKING_DIR]
+  if (typeof raw !== 'string') return null
+  const v = raw.trim()
+  return v.length ? v : null
+}
+
+export function getComposeWorkingDirForGroup<T extends { Labels?: Record<string, string> }>(
+  items: T[],
+): string | null {
+  for (const c of items) {
+    const d = getComposeWorkingDir(c.Labels)
+    if (d) return d
+  }
+  return null
 }
 
 export type ProjectGroup<T> = {

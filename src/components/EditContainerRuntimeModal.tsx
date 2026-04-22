@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { normalizeRestartPolicyName, type RestartPolicyName } from '@shared/restartPolicy'
 import { RestartPolicyField } from '@/components/RestartPolicyField'
 import { useAppDialog } from '@/dialog/AppDialogContext'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 
 type Props = {
   open: boolean
@@ -96,7 +97,8 @@ export function EditContainerRuntimeModal({ open, containerId, onClose, onSaved 
       onSaved()
       onClose()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     } finally {
       setSubmitting(false)
     }
@@ -121,6 +123,9 @@ export function EditContainerRuntimeModal({ open, containerId, onClose, onSaved 
         </h2>
         <p className="mb-3 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
           {t('containers.configRuntimeHint')}
+        </p>
+        <p className="mb-3 text-[10px] leading-relaxed text-zinc-500 dark:text-zinc-500">
+          {t('containers.runtimeResourceHint')}
         </p>
         {loadErr ? (
           <p className="mb-3 text-[11px] text-rose-700 dark:text-rose-300">{loadErr}</p>

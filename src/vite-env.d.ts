@@ -52,9 +52,12 @@ export interface DockerDesktopApi {
     pidsLimit?: number
   }): Promise<IpcResult<void>>
   tagImage(payload: { source: string; repo: string; tag?: string }): Promise<IpcResult<void>>
-  execOnce(payload: { containerId: string; command: string }): Promise<
-    IpcResult<{ output: string; exitCode?: number }>
-  >
+  execOnce(payload: {
+    containerId: string
+    command: string
+    timeoutSec?: number
+  }): Promise<IpcResult<{ output: string; exitCode?: number }>>
+  execCancelCurrent(): Promise<IpcResult<void>>
   startEvents(opts?: { sinceUnix?: number }): Promise<IpcResult<{ subscriptionId: string }>>
   stopEvents(subscriptionId: string): Promise<IpcResult<void>>
   listNetworks(): Promise<IpcResult<unknown[]>>
@@ -66,13 +69,31 @@ export interface DockerDesktopApi {
   >
   stopLogs(subscriptionId: string): Promise<IpcResult<void>>
   openContainerLogsWindow(containerId: string): Promise<IpcResult<void>>
+  openContainerFilesWindow(containerId: string, initialPath?: string): Promise<IpcResult<void>>
+  containerFsList(payload: {
+    containerId: string
+    path: string
+  }): Promise<
+    IpcResult<{
+      entries: Array<{
+        name: string
+        type: 'file' | 'directory'
+        size: number
+        mode: string
+        nlink: number
+        user: string
+        group: string
+        mtime: number
+      }>
+    }>
+  >
+  containerFsReadFile(payload: { containerId: string; path: string }): Promise<IpcResult<{ base64: string }>>
+  containerFsWriteFile(payload: { containerId: string; path: string; base64: string }): Promise<IpcResult<void>>
+  containerFsRm(payload: { containerId: string; path: string }): Promise<IpcResult<void>>
+  containerFsMkdir(payload: { containerId: string; path: string }): Promise<IpcResult<void>>
+  containerFsDownload(payload: { containerId: string; path: string }): Promise<IpcResult<{ filePath: string }>>
+  containerFsUpload(payload: { containerId: string; destDir: string }): Promise<IpcResult<{ files: string[] }>>
   openEngineDocs(): Promise<IpcResult<void>>
-  pruneContainers(): Promise<IpcResult<unknown>>
-  pruneImages(opts?: { danglingOnly?: boolean }): Promise<IpcResult<unknown>>
-  pruneNetworks(): Promise<IpcResult<unknown>>
-  pruneVolumes(): Promise<IpcResult<unknown>>
-  pruneBuilder(): Promise<IpcResult<unknown>>
-  systemPrune(opts?: { volumes?: boolean; allImages?: boolean }): Promise<IpcResult<unknown>>
   createNetwork(payload: { name: string; driver?: string }): Promise<IpcResult<{ id: string }>>
   createVolume(payload: { name: string }): Promise<IpcResult<{ name: string }>>
   networkConnect(payload: { networkId: string; containerId: string }): Promise<IpcResult<void>>
@@ -96,6 +117,7 @@ export interface DockerDesktopApi {
   reconnectDocker(): Promise<IpcResult<void>>
   getDockerRuntimeEnv(): Promise<IpcResult<{ dockerHost: string; dockerContext: string }>>
   getComposeVersion(): Promise<IpcResult<string>>
+  openPathInExplorer(p: string): Promise<IpcResult<void>>
   onLogsChunk(handler: (msg: DockerLogsChunk) => void): () => void
   onEventsChunk(handler: (msg: DockerEventChunk) => void): () => void
 }

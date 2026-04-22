@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { RestartPolicyField } from '@/components/RestartPolicyField'
 import { useAppDialog } from '@/dialog/AppDialogContext'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 import type { RestartPolicyName } from '@shared/restartPolicy'
 
 type Props = {
@@ -40,7 +41,8 @@ export function CreateContainerModal({ open, onClose, onCreated }: Props) {
       onCreated()
       onClose()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     } finally {
       setSubmitting(false)
     }
@@ -95,7 +97,7 @@ export function CreateContainerModal({ open, onClose, onCreated }: Props) {
               value={envText}
               onChange={(e) => setEnvText(e.target.value)}
               rows={3}
-              placeholder={'FOO=bar\nBAZ=1'}
+              placeholder={t('create.envPlaceholder')}
               className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
             />
           </label>

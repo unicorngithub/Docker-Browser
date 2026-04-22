@@ -1,6 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { createReadStream, createWriteStream } from 'node:fs'
+import { readFile } from 'node:fs/promises'
+import path from 'node:path'
 import { finished } from 'node:stream/promises'
 import { pipeline } from 'node:stream/promises'
 import type { Readable } from 'node:stream'
@@ -13,6 +15,23 @@ import { demuxDockerLogStream } from './dockerLogDemux'
 import { normalizeRestartPolicyName, restartPolicyToDocker } from '../../shared/restartPolicy'
 import { parseEnvLines, parsePortPublish } from './dockerCreateHelpers'
 import { buildRecreateCreateOptions } from './dockerRecreateHelpers'
+import {
+  CONTAINER_FS_MAX_READ_BYTES,
+  containerExecArgv,
+  extractFirstFileFromTar,
+  getArchiveBuffer,
+  listDirectoryFromGetArchiveStream,
+  listDirectoryViaExec,
+  normalizeContainerPath,
+  packSingleFileEntry,
+  type TarListEntry,
+} from './containerFs'
+import { getAppMenuLanguage } from './appMenu'
+import {
+  formatContainerUploadMessage,
+  formatUploadFileTooLarge,
+  getIpcDialogStrings,
+} from '../../shared/ipcDialogStrings'
 
 type StreamSub = {
   wc: WebContents
@@ -22,6 +41,9 @@ type StreamSub = {
 const logSubs = new Map<string, StreamSub>()
 const eventSubs = new Map<string, StreamSub>()
 
+/** 当前正在进行的 exec 流清理（仅允许同时取消一个）。 */
+let execStreamCleanup: (() => void) | null = null
+
 let registered = false
 
 function docker() {
@@ -30,6 +52,10 @@ function docker() {
 
 function senderWindow(evt: { sender: WebContents }): BrowserWindow | null {
   return BrowserWindow.fromWebContents(evt.sender) ?? BrowserWindow.getFocusedWindow()
+}
+
+function ipcDlg() {
+  return getIpcDialogStrings(getAppMenuLanguage())
 }
 
 export function registerDockerIpc(): void {
@@ -582,13 +608,30 @@ export function registerDockerIpc(): void {
   )
 
   ipcMain.handle(
-    'docker:exec-once',
+    DockerIpc.execCancelCurrent,
+    async (): Promise<IpcResult<void>> => {
+      try {
+        execStreamCleanup?.()
+      } catch {
+        /* ignore */
+      }
+      execStreamCleanup = null
+      return ipcOk(undefined)
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.execOnce,
     async (_evt, payload: unknown): Promise<IpcResult<{ output: string; exitCode?: number }>> => {
-      const p = payload as { containerId?: string; command?: string }
+      const p = payload as { containerId?: string; command?: string; timeoutSec?: number }
       const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
       const command = typeof p.command === 'string' ? p.command.trim() : ''
       if (!containerId) return ipcErr('invalid containerId')
       if (!command) return ipcErr('command is required')
+      const timeoutSec =
+        typeof p.timeoutSec === 'number' && Number.isFinite(p.timeoutSec)
+          ? Math.min(600, Math.max(1, Math.floor(p.timeoutSec)))
+          : 0
       try {
         const c = docker().getContainer(containerId)
         const exec = await c.exec({
@@ -597,8 +640,17 @@ export function registerDockerIpc(): void {
           AttachStderr: true,
         })
         const stream = (await exec.start({ hijack: true, stdin: false })) as unknown as Readable
+        const cleanup = () => {
+          try {
+            stream.destroy()
+          } catch {
+            /* ignore */
+          }
+        }
+        execStreamCleanup = cleanup
         const chunks: Buffer[] = []
-        await new Promise<void>((resolve, reject) => {
+        let timeoutId: NodeJS.Timeout | undefined
+        const readPromise = new Promise<void>((resolve, reject) => {
           const off = demuxDockerLogStream(stream, (_type, buf) => {
             chunks.push(buf)
           })
@@ -611,12 +663,29 @@ export function registerDockerIpc(): void {
             reject(err)
           })
         })
+        const timeoutPromise =
+          timeoutSec > 0
+            ? new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => {
+                  cleanup()
+                  reject(new Error(`exec timeout after ${timeoutSec}s`))
+                }, timeoutSec * 1000)
+              })
+            : null
+        try {
+          if (timeoutPromise) await Promise.race([readPromise, timeoutPromise])
+          else await readPromise
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId)
+          if (execStreamCleanup === cleanup) execStreamCleanup = null
+        }
         const inspectExec = await exec.inspect()
         return ipcOk({
           output: Buffer.concat(chunks).toString('utf8'),
           exitCode: inspectExec.ExitCode ?? undefined,
         })
       } catch (e) {
+        execStreamCleanup = null
         return ipcErr(e instanceof Error ? e.message : String(e))
       }
     },
@@ -709,76 +778,6 @@ export function registerDockerIpc(): void {
       sub.destroy()
       eventSubs.delete(subscriptionId)
       return ipcOk(undefined)
-    },
-  )
-
-  ipcMain.handle(DockerIpc.pruneContainers, async (): Promise<IpcResult<unknown>> => {
-    try {
-      return ipcOk(await docker().pruneContainers())
-    } catch (e) {
-      return ipcErr(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  ipcMain.handle(
-    DockerIpc.pruneImages,
-    async (_evt, payload: unknown): Promise<IpcResult<unknown>> => {
-      const danglingOnly = (payload as { danglingOnly?: boolean } | undefined)?.danglingOnly !== false
-      try {
-        const opts = danglingOnly ? { filters: { dangling: ['true'] } } : {}
-        return ipcOk(await docker().pruneImages(opts))
-      } catch (e) {
-        return ipcErr(e instanceof Error ? e.message : String(e))
-      }
-    },
-  )
-
-  ipcMain.handle(DockerIpc.pruneNetworks, async (): Promise<IpcResult<unknown>> => {
-    try {
-      return ipcOk(await docker().pruneNetworks())
-    } catch (e) {
-      return ipcErr(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  ipcMain.handle(DockerIpc.pruneVolumes, async (): Promise<IpcResult<unknown>> => {
-    try {
-      return ipcOk(await docker().pruneVolumes())
-    } catch (e) {
-      return ipcErr(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  ipcMain.handle(DockerIpc.pruneBuilder, async (): Promise<IpcResult<unknown>> => {
-    try {
-      return ipcOk(await docker().pruneBuilder())
-    } catch (e) {
-      return ipcErr(e instanceof Error ? e.message : String(e))
-    }
-  })
-
-  ipcMain.handle(
-    DockerIpc.systemPrune,
-    async (_evt, payload: unknown): Promise<IpcResult<unknown>> => {
-      const p = payload as { volumes?: boolean; allImages?: boolean }
-      try {
-        const d = docker()
-        const out: Record<string, unknown> = {}
-        out.containers = await d.pruneContainers()
-        out.networks = await d.pruneNetworks()
-        out.images = await d.pruneImages(
-          p.allImages === true ? {} : { filters: { dangling: ['true'] } },
-        )
-        if (p.volumes === true) out.volumes = await d.pruneVolumes()
-        try {
-          out.builder = await d.pruneBuilder()
-        } catch {
-          /* builder prune optional */
-        }
-        return ipcOk(out)
-      } catch (e) {
-        return ipcErr(e instanceof Error ? e.message : String(e))
-      }
     },
   )
 
@@ -908,10 +907,11 @@ export function registerDockerIpc(): void {
       if (!name) return ipcErr('image name is required')
       const win = senderWindow(evt)
       if (!win) return ipcErr('No window for file dialog')
+      const d = ipcDlg()
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
-        title: 'Save image',
+        title: d.saveImageTitle,
         defaultPath: 'image.tar',
-        filters: [{ name: 'Tar', extensions: ['tar'] }],
+        filters: [{ name: d.tarFilterName, extensions: ['tar'] }],
       })
       if (canceled || !filePath) return ipcErr('cancelled')
       try {
@@ -929,10 +929,11 @@ export function registerDockerIpc(): void {
     async (evt): Promise<IpcResult<void>> => {
       const win = senderWindow(evt)
       if (!win) return ipcErr('No window for file dialog')
+      const d = ipcDlg()
       const { canceled, filePaths } = await dialog.showOpenDialog(win, {
-        title: 'Load image',
+        title: d.loadImageTitle,
         properties: ['openFile'],
-        filters: [{ name: 'Tar', extensions: ['tar'] }],
+        filters: [{ name: d.tarFilterName, extensions: ['tar'] }],
       })
       if (canceled || !filePaths?.[0]) return ipcErr('cancelled')
       try {
@@ -986,16 +987,241 @@ export function registerDockerIpc(): void {
       if (!containerId) return ipcErr('containerId is required')
       const win = senderWindow(evt)
       if (!win) return ipcErr('No window for file dialog')
+      const d = ipcDlg()
       const { canceled, filePath } = await dialog.showSaveDialog(win, {
-        title: 'Export container',
+        title: d.exportContainerTitle,
         defaultPath: 'container-export.tar',
-        filters: [{ name: 'Tar', extensions: ['tar'] }],
+        filters: [{ name: d.tarFilterName, extensions: ['tar'] }],
       })
       if (canceled || !filePath) return ipcErr('cancelled')
       try {
         const stream = (await docker().getContainer(containerId).export()) as Readable
         await pipeline(stream, createWriteStream(filePath))
         return ipcOk({ filePath })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsList,
+    async (_evt, payload: unknown): Promise<IpcResult<{ entries: TarListEntry[] }>> => {
+      const p = payload as { containerId?: string; path?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let dirPath = '/'
+      try {
+        dirPath = normalizeContainerPath(typeof p.path === 'string' ? p.path : '/')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      try {
+        const c = docker().getContainer(containerId)
+        const inspect = await c.inspect()
+        const running = Boolean(inspect.State?.Running)
+        if (running) {
+          try {
+            const entries = await listDirectoryViaExec(c, dirPath)
+            return ipcOk({ entries })
+          } catch {
+            /* 无 sh/stat 等时回退到 getArchive 流式解析 */
+          }
+        }
+        const entries = await listDirectoryFromGetArchiveStream(c, dirPath)
+        return ipcOk({ entries })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsReadFile,
+    async (_evt, payload: unknown): Promise<IpcResult<{ base64: string }>> => {
+      const p = payload as { containerId?: string; path?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let filePath = '/'
+      try {
+        filePath = normalizeContainerPath(typeof p.path === 'string' ? p.path : '')
+        if (!p.path?.trim()) return ipcErr('path is required')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      try {
+        const c = docker().getContainer(containerId)
+        const buf = await getArchiveBuffer(c, filePath)
+        const body = await extractFirstFileFromTar(buf, CONTAINER_FS_MAX_READ_BYTES)
+        return ipcOk({ base64: body.toString('base64') })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsWriteFile,
+    async (_evt, payload: unknown): Promise<IpcResult<void>> => {
+      const p = payload as { containerId?: string; path?: string; base64?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      const base64 = typeof p.base64 === 'string' ? p.base64 : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let filePath = '/'
+      try {
+        filePath = normalizeContainerPath(typeof p.path === 'string' ? p.path : '')
+        if (!p.path?.trim()) return ipcErr('path is required')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      let body: Buffer
+      try {
+        body = Buffer.from(base64, 'base64')
+      } catch {
+        return ipcErr('invalid base64')
+      }
+      if (body.length > CONTAINER_FS_MAX_READ_BYTES) return ipcErr(`file exceeds ${CONTAINER_FS_MAX_READ_BYTES} bytes`)
+      const parent = path.posix.dirname(filePath)
+      const base = path.posix.basename(filePath)
+      if (!base || base === '.' || base === '..') return ipcErr('invalid file path')
+      try {
+        const c = docker().getContainer(containerId)
+        const packStream = packSingleFileEntry(base, body)
+        await c.putArchive(packStream as Readable, { path: parent || '/' })
+        return ipcOk(undefined)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsRm,
+    async (_evt, payload: unknown): Promise<IpcResult<void>> => {
+      const p = payload as { containerId?: string; path?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let target = '/'
+      try {
+        target = normalizeContainerPath(typeof p.path === 'string' ? p.path : '')
+        if (!p.path?.trim()) return ipcErr('path is required')
+        if (target === '/') return ipcErr('refusing to remove root')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      try {
+        const c = docker().getContainer(containerId)
+        const { exitCode, output } = await containerExecArgv(c, ['rm', '-rf', target])
+        if (exitCode !== 0 && exitCode !== undefined)
+          return ipcErr(output.trim() || `rm failed (exit ${exitCode})`)
+        return ipcOk(undefined)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsMkdir,
+    async (_evt, payload: unknown): Promise<IpcResult<void>> => {
+      const p = payload as { containerId?: string; path?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let dirPath = '/'
+      try {
+        dirPath = normalizeContainerPath(typeof p.path === 'string' ? p.path : '')
+        if (!p.path?.trim()) return ipcErr('path is required')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      try {
+        const c = docker().getContainer(containerId)
+        const { exitCode, output } = await containerExecArgv(c, ['mkdir', '-p', dirPath])
+        if (exitCode !== 0 && exitCode !== undefined)
+          return ipcErr(output.trim() || `mkdir failed (exit ${exitCode})`)
+        return ipcOk(undefined)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsDownload,
+    async (evt, payload: unknown): Promise<IpcResult<{ filePath: string }>> => {
+      const p = payload as { containerId?: string; path?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let remotePath = '/'
+      try {
+        remotePath = normalizeContainerPath(typeof p.path === 'string' ? p.path : '')
+        if (!p.path?.trim()) return ipcErr('path is required')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      const win = senderWindow(evt)
+      if (!win) return ipcErr('No window for file dialog')
+      const d = ipcDlg()
+      const baseName = path.posix.basename(remotePath) || 'download.tar'
+      const { canceled, filePath: savePath } = await dialog.showSaveDialog(win, {
+        title: d.containerDownloadTitle,
+        message: d.containerDownloadMessage,
+        defaultPath: baseName,
+        filters: [
+          { name: d.tarFilterName, extensions: ['tar'] },
+          { name: d.allFilesFilterName, extensions: ['*'] },
+        ],
+        buttonLabel: d.containerDownloadSaveLabel,
+      })
+      if (canceled || !savePath) return ipcErr('cancelled')
+      try {
+        const c = docker().getContainer(containerId)
+        const stream = (await c.getArchive({ path: remotePath })) as Readable
+        await pipeline(stream, createWriteStream(savePath))
+        return ipcOk({ filePath: savePath })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerFsUpload,
+    async (evt, payload: unknown): Promise<IpcResult<{ files: string[] }>> => {
+      const p = payload as { containerId?: string; destDir?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      let destDir = '/'
+      try {
+        destDir = normalizeContainerPath(typeof p.destDir === 'string' ? p.destDir : '/')
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+      const win = senderWindow(evt)
+      if (!win) return ipcErr('No window for file dialog')
+      const d = ipcDlg()
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        title: d.containerUploadTitle,
+        message: formatContainerUploadMessage(d, destDir, CONTAINER_FS_MAX_READ_BYTES),
+        properties: ['openFile', 'multiSelections'],
+        buttonLabel: d.containerUploadButtonLabel,
+      })
+      if (canceled || !filePaths?.length) return ipcErr('cancelled')
+      try {
+        const c = docker().getContainer(containerId)
+        const uploaded: string[] = []
+        for (const fp of filePaths) {
+          const body = await readFile(fp)
+          if (body.length > CONTAINER_FS_MAX_READ_BYTES)
+            return ipcErr(
+              formatUploadFileTooLarge(d, path.basename(fp), CONTAINER_FS_MAX_READ_BYTES),
+            )
+          const name = path.basename(fp)
+          const packStream = packSingleFileEntry(name, body)
+          await c.putArchive(packStream as Readable, { path: destDir })
+          uploaded.push(name)
+        }
+        return ipcOk({ files: uploaded })
       } catch (e) {
         return ipcErr(e instanceof Error ? e.message : String(e))
       }

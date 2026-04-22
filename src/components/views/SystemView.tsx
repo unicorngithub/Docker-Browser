@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 
 function JsonBlock({ title, data }: { title: string; data: unknown }) {
   const str =
@@ -19,7 +20,7 @@ function JsonBlock({ title, data }: { title: string; data: unknown }) {
 
 export function SystemView() {
   const { t } = useTranslation()
-  const { alert, confirm } = useAppDialog()
+  const { alert } = useAppDialog()
   const systemInfo = useDockerStore((s) => s.systemInfo)
   const versionJson = useDockerStore((s) => s.versionJson)
   const diskJson = useDockerStore((s) => s.diskJson)
@@ -41,7 +42,8 @@ export function SystemView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      await alert(e instanceof Error ? e.message : String(e))
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
     }
   }
 
@@ -53,7 +55,7 @@ export function SystemView() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overflow-x-hidden p-4">
       <h2 className="text-sm font-semibold">{t('system.title')}</h2>
 
       <section className="rounded-lg border border-zinc-200/80 bg-white/60 p-3 dark:border-white/[0.06] dark:bg-zinc-900/40">
@@ -61,90 +63,6 @@ export function SystemView() {
           {t('system.maintenanceTitle')}
         </h3>
         <div className="mb-3 flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.pruneContainersConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.pruneContainers())
-              })
-            }
-          >
-            {t('system.pruneContainers')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.pruneImagesDanglingConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.pruneImages({ danglingOnly: true }))
-              })
-            }
-          >
-            {t('system.pruneImagesDangling')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.pruneNetworksConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.pruneNetworks())
-              })
-            }
-          >
-            {t('system.pruneNetworks')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-rose-300 px-2 py-1 text-[10px] text-rose-900 dark:border-rose-800 dark:text-rose-100"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.pruneVolumesConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.pruneVolumes())
-              })
-            }
-          >
-            {t('system.pruneVolumes')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.pruneBuilderConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.pruneBuilder())
-              })
-            }
-          >
-            {t('system.pruneBuilder')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-amber-400 px-2 py-1 text-[10px] text-amber-950 dark:border-amber-800 dark:text-amber-100"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.systemPruneConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.systemPrune({ volumes: false, allImages: false }))
-              })
-            }
-          >
-            {t('system.systemPrune')}
-          </button>
-          <button
-            type="button"
-            className="rounded-md border border-rose-500 px-2 py-1 text-[10px] text-rose-950 dark:border-rose-700 dark:text-rose-100"
-            onClick={() =>
-              void run(async () => {
-                if (!(await confirm(t('system.systemPruneVolumesConfirm')))) return
-                await unwrapIpc(window.dockerDesktop.systemPrune({ volumes: true, allImages: false }))
-              })
-            }
-          >
-            {t('system.systemPruneVolumes')}
-          </button>
           <button
             type="button"
             className="rounded-md border border-sky-400 px-2 py-1 text-[10px] dark:border-sky-800"
