@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
+import { alertEngineError, formatThrownEngineError } from '@/lib/alertMessage'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
-import { formatThrownEngineError } from '@/lib/alertMessage'
 
 function JsonBlock({ title, data }: { title: string; data: unknown }) {
   const str =
@@ -49,8 +49,12 @@ export function SystemView() {
 
   const refreshCompose = () => {
     void window.dockerDesktop.getComposeVersion().then(async (res) => {
-      if (!res.ok) setComposeOut(res.error)
-      else setComposeOut(res.data)
+      if (!res.ok) {
+        setComposeOut('—')
+        await alertEngineError(alert, t, res.error)
+        return
+      }
+      setComposeOut(res.data)
     })
   }
 

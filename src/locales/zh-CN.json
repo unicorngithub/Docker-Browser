@@ -6,7 +6,8 @@
     "networks": "网络",
     "volumes": "数据卷",
     "events": "事件",
-    "system": "系统"
+    "system": "系统",
+    "switchWhenReady": "数据加载完成后可切换页面"
   },
   "header": {
     "refresh": "刷新",
@@ -42,7 +43,8 @@
     "forceRemove": "强制删除",
     "removeVol": "删除卷",
     "selectAll": "全选",
-    "errorDetail": "出现问题：\n{{detail}}"
+    "errorDetail": "出现问题：\n{{detail}}",
+    "connectingEllipsis": "检测中…"
   },
   "containers": {
     "title": "容器",
@@ -170,12 +172,18 @@
     "saveTar": "导出为 tar",
     "loadTar": "从 tar 导入",
     "history": "构建历史",
-    "historyTitle": "镜像历史"
+    "historyTitle": "镜像历史",
+    "selectionHint": "点击列表行可选中镜像，用于打标签、构建历史与导出 tar；左侧勾选框用于多选删除。",
+    "removePartialResult": "删除完成：成功 {{ok}} 个，失败 {{failed}} 个。\n{{names}}"
   },
   "networks": {
     "title": "网络",
     "remove": "删除",
     "removeConfirm": "删除该网络？",
+    "removeSelected": "删除选中",
+    "removeBulkConfirm": "确定删除已选中的 {{count}} 个网络？此操作不可恢复。",
+    "removePartialResult": "删除完成：成功 {{ok}} 个，失败 {{failed}} 个。\n{{names}}",
+    "selectionHint": "点击行用于下方「接入容器」等操作；勾选框用于多选删除。",
     "create": "创建网络",
     "createName": "网络名称",
     "createDriver": "驱动（默认 bridge）",
@@ -187,6 +195,10 @@
   "volumes": {
     "title": "数据卷",
     "removeConfirm": "删除该卷？数据将丢失。",
+    "removeSelected": "删除选中",
+    "removeBulkConfirm": "确定删除已选中的 {{count}} 个卷？数据将丢失且不可恢复。",
+    "removePartialResult": "删除完成：成功 {{ok}} 个，失败 {{failed}} 个。\n{{names}}",
+    "selectionHint": "点击行查看引用关系；勾选框用于多选删除。",
     "create": "创建卷",
     "createName": "卷名称",
     "usedBy": "引用该卷的容器",
@@ -198,6 +210,8 @@
     "start": "订阅",
     "stop": "停止订阅",
     "clear": "清空",
+    "clearConfirm": "清空当前事件列表？",
+    "starting": "连接中…",
     "empty": "点击订阅以查看实时事件。",
     "filterLabel": "过滤",
     "filterPlaceholder": "按摘要文本过滤…"
@@ -244,7 +258,11 @@
     "stop": "停止",
     "clear": "清空",
     "tail": "尾部行数",
-    "timestamps": "显示时间戳"
+    "timestamps": "显示时间戳",
+    "streamErrorLine": "[日志错误] {{detail}}",
+    "clearConfirm": "清空当前日志内容？",
+    "starting": "连接中…",
+    "listContainersFailed": "无法加载容器列表以显示名称：{{detail}}"
   },
   "files": {
     "title": "文档管理",
@@ -285,6 +303,7 @@
     "openContainingFolder": "打开所在文件夹",
     "xferDismiss": "关闭",
     "copyPathFailed": "无法复制到剪贴板。",
-    "openFolderFailed": "无法解析保存目录。"
+    "openFolderFailed": "无法解析保存目录。",
+    "discardMkdirInput": "已输入目录名，确定关闭且不创建？"
   }
 }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
@@ -30,6 +30,28 @@ export function NetworksView() {
   const [netName, setNetName] = useState('')
   const [netDriver, setNetDriver] = useState('bridge')
   const [connectCid, setConnectCid] = useState('')
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(() => new Set())
+  const headerCheckboxRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setCheckedIds((prev) => {
+      const valid = new Set(networks.map((n) => n.Id))
+      const next = new Set<string>()
+      for (const id of prev) if (valid.has(id)) next.add(id)
+      return next
+    })
+  }, [networks])
+
+  const allSelected = useMemo(
+    () => networks.length > 0 && networks.every((n) => checkedIds.has(n.Id)),
+    [networks, checkedIds],
+  )
+
+  useEffect(() => {
+    const el = headerCheckboxRef.current
+    if (!el) return
+    el.indeterminate = checkedIds.size > 0 && !allSelected
+  }, [checkedIds, allSelected])
 
   const run = async (fn: () => Promise<void>) => {
     try {
@@ -41,12 +63,35 @@ export function NetworksView() {
     }
   }
 
-  const onRemove = async () => {
-    if (!sel) return
-    if (!(await confirm(t('networks.removeConfirm')))) return
+  const onRemoveSelected = async () => {
+    if (checkedIds.size === 0) return
+    if (!(await confirm(t('networks.removeBulkConfirm', { count: checkedIds.size })))) return
+    const ids = [...checkedIds]
+    const primary = selectedNetworkId
     void run(async () => {
-      await unwrapIpc(window.dockerDesktop.removeNetwork(sel.Id))
-      setSelectedNetworkId(null)
+      const failures: string[] = []
+      let okCount = 0
+      for (const id of ids) {
+        const row = networks.find((x) => x.Id === id)
+        if (!row) continue
+        try {
+          await unwrapIpc(window.dockerDesktop.removeNetwork(row.Id))
+          okCount++
+        } catch {
+          failures.push(row.Name ?? shortId(row.Id))
+        }
+      }
+      setCheckedIds(new Set())
+      if (primary && ids.includes(primary)) setSelectedNetworkId(null)
+      if (failures.length) {
+        await alert(
+          t('networks.removePartialResult', {
+            ok: okCount,
+            failed: failures.length,
+            names: failures.slice(0, 12).join(', '),
+          }),
+        )
+      }
     })
   }
 
@@ -70,6 +115,20 @@ export function NetworksView() {
     })
   }
 
+  const toggleChecked = (id: string, next: boolean) => {
+    setCheckedIds((prev) => {
+      const n = new Set(prev)
+      if (next) n.add(id)
+      else n.delete(id)
+      return n
+    })
+  }
+
+  const toggleSelectAll = () => {
+    if (allSelected) setCheckedIds(new Set())
+    else setCheckedIds(new Set(networks.map((n) => n.Id)))
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -77,14 +136,15 @@ export function NetworksView() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={!sel || busy}
-            onClick={() => void onRemove()}
+            disabled={checkedIds.size === 0 || busy}
+            onClick={() => void onRemoveSelected()}
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
-            {t('networks.remove')}
+            {t('networks.removeSelected')}
           </button>
         </div>
       </div>
+      <p className="text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">{t('networks.selectionHint')}</p>
       <div className="flex flex-wrap items-end gap-2 rounded-lg border border-zinc-200/70 bg-zinc-50/80 p-2 text-[11px] dark:border-white/[0.06] dark:bg-zinc-900/50">
         <span className="font-medium text-zinc-700 dark:text-zinc-300">{t('networks.create')}</span>
         <label className="flex flex-col gap-0.5">
@@ -141,6 +201,17 @@ export function NetworksView() {
         <table className="w-full min-w-[560px] border-collapse text-left text-[11px]">
           <thead className="sticky top-0 z-10 bg-zinc-100/95 text-zinc-600 backdrop-blur dark:bg-zinc-900/95 dark:text-zinc-400">
             <tr>
+              <th className="w-9 border-b border-zinc-200 px-1 py-2 dark:border-zinc-800">
+                <input
+                  ref={headerCheckboxRef}
+                  type="checkbox"
+                  className="align-middle"
+                  checked={allSelected}
+                  onChange={toggleSelectAll}
+                  title={t('common.selectAll')}
+                  aria-label={t('common.selectAll')}
+                />
+              </th>
               <th className="border-b border-zinc-200 px-2 py-2 font-medium dark:border-zinc-800">
                 {t('common.name')}
               </th>
@@ -158,6 +229,7 @@ export function NetworksView() {
           <tbody>
             {networks.map((n) => {
               const active = n.Id === selectedNetworkId
+              const checked = checkedIds.has(n.Id)
               return (
                 <tr
                   key={n.Id}
@@ -166,12 +238,25 @@ export function NetworksView() {
                     active ? 'bg-sky-500/10 dark:bg-sky-500/15' : ''
                   }`}
                 >
-                  <td className="px-2 py-1.5 font-medium text-zinc-900 dark:text-zinc-100">
+                  <td className="px-1 py-1.5 align-middle" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      className="align-middle"
+                      checked={checked}
+                      onChange={(e) => {
+                        e.stopPropagation()
+                        toggleChecked(n.Id, e.target.checked)
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={n.Name ?? shortId(n.Id)}
+                    />
+                  </td>
+                  <td className="px-2 py-1.5 align-middle font-medium text-zinc-900 dark:text-zinc-100">
                     {n.Name ?? '—'}
                   </td>
-                  <td className="px-2 py-1.5 font-mono text-zinc-600 dark:text-zinc-400">{shortId(n.Id)}</td>
-                  <td className="px-2 py-1.5">{n.Driver ?? '—'}</td>
-                  <td className="px-2 py-1.5">{n.Scope ?? '—'}</td>
+                  <td className="px-2 py-1.5 align-middle font-mono text-zinc-600 dark:text-zinc-400">{shortId(n.Id)}</td>
+                  <td className="px-2 py-1.5 align-middle">{n.Driver ?? '—'}</td>
+                  <td className="px-2 py-1.5 align-middle">{n.Scope ?? '—'}</td>
                 </tr>
               )
             })}

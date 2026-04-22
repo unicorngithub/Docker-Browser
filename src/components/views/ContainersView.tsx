@@ -380,7 +380,6 @@ export function ContainersView() {
     void run(async () => {
       const res = await window.dockerDesktop.exportContainerTar({ containerId: id })
       if (!res.ok) throw new Error(res.error)
-      await alert(t('containers.exportTarDone', { path: res.data.filePath }))
     })
   }
 

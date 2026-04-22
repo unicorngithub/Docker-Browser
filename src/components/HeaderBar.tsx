@@ -4,9 +4,12 @@ import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
+import { useAppDialog } from '@/dialog/AppDialogContext'
+import { formatThrownEngineError } from '@/lib/alertMessage'
 
 export function HeaderBar() {
   const { t } = useTranslation()
+  const { alert } = useAppDialog()
   const connectionOk = useDockerStore((s) => s.connectionOk)
   const busy = useDockerStore((s) => s.busy)
   const globalError = useDockerStore((s) => s.globalError)
@@ -30,12 +33,15 @@ export function HeaderBar() {
   }, [ping, loadTab, tab])
 
   const onDocs = () => {
-    void unwrapIpc(window.dockerDesktop.openEngineDocs()).catch(() => {})
+    void unwrapIpc(window.dockerDesktop.openEngineDocs()).catch(async (e) => {
+      const text = formatThrownEngineError(t, e)
+      if (text) await alert(text)
+    })
   }
 
   return (
     <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/70 px-4 py-2.5 backdrop-blur dark:border-white/[0.06] dark:bg-zinc-950/70">
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
         <h1 className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
           {t('app.title')}
         </h1>
@@ -62,10 +68,13 @@ export function HeaderBar() {
             ? t('header.connected')
             : connectionOk === false
               ? t('header.disconnected')
-              : '…'}
+              : t('common.connectingEllipsis')}
         </span>
         {globalError ? (
-          <span className="hidden max-w-[240px] truncate text-[10px] text-rose-600 dark:text-rose-400 md:inline">
+          <span
+            className="min-w-0 max-w-[min(52vw,18rem)] shrink truncate text-[10px] text-rose-600 dark:text-rose-400 sm:max-w-[20rem]"
+            title={globalError}
+          >
             {globalError}
           </span>
         ) : null}

@@ -6,7 +6,8 @@
     "networks": "Networks",
     "volumes": "Volumes",
     "events": "Events",
-    "system": "System"
+    "system": "System",
+    "switchWhenReady": "Switch tabs after the current load finishes"
   },
   "header": {
     "refresh": "Refresh",
@@ -42,7 +43,8 @@
     "forceRemove": "Force remove",
     "removeVol": "Remove volume",
     "selectAll": "Select all",
-    "errorDetail": "Something went wrong:\n{{detail}}"
+    "errorDetail": "Something went wrong:\n{{detail}}",
+    "connectingEllipsis": "Checking…"
   },
   "containers": {
     "title": "Containers",
@@ -170,12 +172,18 @@
     "saveTar": "Save image to tar",
     "loadTar": "Load image from tar",
     "history": "History",
-    "historyTitle": "Image history"
+    "historyTitle": "Image history",
+    "selectionHint": "Click a row to select an image for tagging, history, and export; use checkboxes for multi-select delete.",
+    "removePartialResult": "Delete finished: {{ok}} succeeded, {{failed}} failed.\n{{names}}"
   },
   "networks": {
     "title": "Networks",
     "remove": "Remove",
     "removeConfirm": "Remove this network?",
+    "removeSelected": "Remove selected",
+    "removeBulkConfirm": "Remove {{count}} selected network(s)? This cannot be undone.",
+    "removePartialResult": "Delete finished: {{ok}} succeeded, {{failed}} failed.\n{{names}}",
+    "selectionHint": "Click a row for connect actions below; use checkboxes for multi-select delete.",
     "create": "Create network",
     "createName": "Network name",
     "createDriver": "Driver (default bridge)",
@@ -187,6 +195,10 @@
   "volumes": {
     "title": "Volumes",
     "removeConfirm": "Delete this volume? Data will be lost.",
+    "removeSelected": "Remove selected",
+    "removeBulkConfirm": "Delete {{count}} selected volume(s)? Data will be lost.",
+    "removePartialResult": "Delete finished: {{ok}} succeeded, {{failed}} failed.\n{{names}}",
+    "selectionHint": "Click a row to see which containers use the volume; use checkboxes for multi-select delete.",
     "create": "Create volume",
     "createName": "Volume name",
     "usedBy": "Containers using this volume",
@@ -198,6 +210,8 @@
     "start": "Subscribe",
     "stop": "Unsubscribe",
     "clear": "Clear",
+    "clearConfirm": "Clear the current event list?",
+    "starting": "Connecting…",
     "empty": "Start subscription to see live events.",
     "filterLabel": "Filter",
     "filterPlaceholder": "Filter by summary text…"
@@ -244,7 +258,11 @@
     "stop": "Stop",
     "clear": "Clear",
     "tail": "Tail lines",
-    "timestamps": "Timestamps"
+    "timestamps": "Timestamps",
+    "streamErrorLine": "[Log error] {{detail}}",
+    "clearConfirm": "Clear current log output?",
+    "starting": "Connecting…",
+    "listContainersFailed": "Could not load containers to resolve the name: {{detail}}"
   },
   "files": {
     "title": "Files",
@@ -285,6 +303,7 @@
     "openContainingFolder": "Open folder",
     "xferDismiss": "Dismiss",
     "copyPathFailed": "Could not copy to the clipboard.",
-    "openFolderFailed": "Could not resolve the save folder."
+    "openFolderFailed": "Could not resolve the save folder.",
+    "discardMkdirInput": "A folder name was entered. Close without creating?"
   }
 }

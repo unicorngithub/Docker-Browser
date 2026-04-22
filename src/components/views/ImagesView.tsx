@@ -104,13 +104,29 @@ export function ImagesView() {
     const ids = [...checkedIds]
     const primary = selectedImageRef
     void run(async () => {
+      const failures: string[] = []
+      let okCount = 0
       for (const id of ids) {
         const im = images.find((x) => x.Id === id)
         if (!im) continue
-        await unwrapIpc(window.dockerDesktop.removeImage({ name: imageApiName(im), force: false }))
+        try {
+          await unwrapIpc(window.dockerDesktop.removeImage({ name: imageApiName(im), force: false }))
+          okCount++
+        } catch {
+          failures.push(imageApiName(im))
+        }
       }
       setCheckedIds(new Set())
       if (primary && ids.includes(primary)) setSelectedImageRef(null)
+      if (failures.length) {
+        await alert(
+          t('images.removePartialResult', {
+            ok: okCount,
+            failed: failures.length,
+            names: failures.slice(0, 12).join(', '),
+          }),
+        )
+      }
     })
   }
 
@@ -214,6 +230,7 @@ export function ImagesView() {
           </button>
         </div>
       </div>
+      <p className="shrink-0 text-[10px] leading-snug text-zinc-500 dark:text-zinc-400">{t('images.selectionHint')}</p>
       {sel && imageNameForApi ? (
         <div className="flex min-w-0 shrink-0 flex-nowrap items-center gap-x-2 gap-y-1 overflow-x-auto rounded-lg border border-zinc-200/70 bg-zinc-50/80 px-2 py-1.5 text-[11px] dark:border-white/[0.06] dark:bg-zinc-900/50">
           <span className="shrink-0 whitespace-nowrap text-zinc-500">{t('images.tagSource')}</span>

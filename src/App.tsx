@@ -48,7 +48,12 @@ export default function App() {
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
               {busy && tab !== 'system' && tab !== 'events' ? (
-                <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center bg-white/40 text-xs dark:bg-zinc-950/40">
+                <div
+                  className="absolute inset-0 z-20 flex cursor-wait items-center justify-center bg-white/50 text-xs dark:bg-zinc-950/50"
+                  role="status"
+                  aria-live="polite"
+                  aria-busy="true"
+                >
                   {t('common.loading')}
                 </div>
               ) : null}

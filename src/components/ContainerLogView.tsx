@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 
 const MAX_CHARS = 512_000
 
@@ -12,11 +13,14 @@ type Props = {
 
 export function ContainerLogView({ containerId, autoStart = false, className = '' }: Props) {
   const { t } = useTranslation()
+  const { confirm } = useAppDialog()
   const [tail, setTail] = useState(200)
   const [timestamps, setTimestamps] = useState(true)
   const [text, setText] = useState('')
   const [subId, setSubId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const startLock = useRef(false)
   const preRef = useRef<HTMLPreElement>(null)
   const autoScroll = useRef(true)
   const subIdRef = useRef<string | null>(null)
@@ -77,22 +81,30 @@ export function ContainerLogView({ containerId, autoStart = false, className = '
   }, [text])
 
   const start = useCallback(async () => {
-    const prev = subIdRef.current
-    if (prev) await stopInternal(prev)
-    setText('')
-    const res = await window.dockerDesktop.startLogs({
-      containerId,
-      tail: tailRef.current,
-      timestamps: tsRef.current,
-    })
-    if (!res.ok) {
-      setText((s) => s + `\n[error] ${res.error}\n`)
-      return
+    if (startLock.current) return
+    startLock.current = true
+    setStarting(true)
+    try {
+      const prev = subIdRef.current
+      if (prev) await stopInternal(prev)
+      setText('')
+      const res = await window.dockerDesktop.startLogs({
+        containerId,
+        tail: tailRef.current,
+        timestamps: tsRef.current,
+      })
+      if (!res.ok) {
+        setText((s) => s + '\n' + t('logs.streamErrorLine', { detail: res.error }) + '\n')
+        return
+      }
+      subIdRef.current = res.data.subscriptionId
+      setSubId(res.data.subscriptionId)
+      setRunning(true)
+    } finally {
+      startLock.current = false
+      setStarting(false)
     }
-    subIdRef.current = res.data.subscriptionId
-    setSubId(res.data.subscriptionId)
-    setRunning(true)
-  }, [containerId, stopInternal])
+  }, [containerId, stopInternal, t])
 
   useEffect(() => {
     if (!autoStart) return
@@ -109,7 +121,7 @@ export function ContainerLogView({ containerId, autoStart = false, className = '
       })
       if (cancelled) return
       if (!res.ok) {
-        setText((s) => s + `\n[error] ${res.error}\n`)
+        setText((s) => s + '\n' + t('logs.streamErrorLine', { detail: res.error }) + '\n')
         return
       }
       subIdRef.current = res.data.subscriptionId
@@ -124,7 +136,7 @@ export function ContainerLogView({ containerId, autoStart = false, className = '
       setSubId(null)
       setRunning(false)
     }
-  }, [autoStart, containerId, stopInternal])
+  }, [autoStart, containerId, stopInternal, t])
 
   const stop = async () => {
     const id = subIdRef.current
@@ -136,6 +148,12 @@ export function ContainerLogView({ containerId, autoStart = false, className = '
     if (!el) return
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
     autoScroll.current = nearBottom
+  }
+
+  const onClear = async () => {
+    if (!text.trim()) return
+    if (!(await confirm(t('logs.clearConfirm')))) return
+    setText('')
   }
 
   return (
@@ -162,11 +180,11 @@ export function ContainerLogView({ containerId, autoStart = false, className = '
           </label>
           <button
             type="button"
-            disabled={running}
+            disabled={running || starting}
             onClick={() => void start()}
             className="rounded-md bg-sky-600 px-2 py-1 text-[10px] font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
           >
-            {t('logs.start')}
+            {starting ? t('logs.starting') : t('logs.start')}
           </button>
           <button
             type="button"
@@ -178,7 +196,7 @@ export function ContainerLogView({ containerId, autoStart = false, className = '
           </button>
           <button
             type="button"
-            onClick={() => setText('')}
+            onClick={() => void onClear()}
             className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-[10px] font-medium dark:border-zinc-600 dark:bg-zinc-900"
           >
             {t('logs.clear')}

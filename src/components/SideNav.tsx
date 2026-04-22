@@ -13,6 +13,7 @@ const tabs: { id: TabId; labelKey: string }[] = [
 export function SideNav() {
   const { t } = useTranslation()
   const tab = useDockerStore((s) => s.tab)
+  const busy = useDockerStore((s) => s.busy)
   const setTab = useDockerStore((s) => s.setTab)
 
   return (
@@ -21,8 +22,10 @@ export function SideNav() {
         <button
           key={id}
           type="button"
+          disabled={busy}
+          title={busy ? t('nav.switchWhenReady') : undefined}
           onClick={() => setTab(id)}
-          className={`rounded-lg px-3 py-2 text-left text-xs font-medium transition ${
+          className={`rounded-lg px-3 py-2 text-left text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-50 ${
             tab === id
               ? 'bg-sky-600 text-white shadow-sm dark:bg-sky-700'
               : 'text-zinc-700 hover:bg-zinc-200/80 dark:text-zinc-300 dark:hover:bg-zinc-800/80'

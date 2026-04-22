@@ -29,12 +29,14 @@ function formatEventLine(line: string): string {
 
 export function EventsView() {
   const { t } = useTranslation()
-  const { alert } = useAppDialog()
+  const { alert, confirm } = useAppDialog()
   const [lines, setLines] = useState<string[]>([])
   const [filter, setFilter] = useState('')
   const [subId, setSubId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
+  const [starting, setStarting] = useState(false)
   const subRef = useRef<string | null>(null)
+  const startLock = useRef(false)
 
   const filteredLines = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -76,17 +78,31 @@ export function EventsView() {
   }, [subId])
 
   const start = async () => {
-    await stop()
-    setLines([])
-    const sinceUnix = Math.floor(Date.now() / 1000) - 120
-    const res = await window.dockerDesktop.startEvents({ sinceUnix })
-    if (!res.ok) {
-      await alertEngineError(alert, t, res.error)
-      return
+    if (startLock.current) return
+    startLock.current = true
+    setStarting(true)
+    try {
+      await stop()
+      setLines([])
+      const sinceUnix = Math.floor(Date.now() / 1000) - 120
+      const res = await window.dockerDesktop.startEvents({ sinceUnix })
+      if (!res.ok) {
+        await alertEngineError(alert, t, res.error)
+        return
+      }
+      subRef.current = res.data.subscriptionId
+      setSubId(res.data.subscriptionId)
+      setRunning(true)
+    } finally {
+      startLock.current = false
+      setStarting(false)
     }
-    subRef.current = res.data.subscriptionId
-    setSubId(res.data.subscriptionId)
-    setRunning(true)
+  }
+
+  const onClear = async () => {
+    if (!lines.length) return
+    if (!(await confirm(t('events.clearConfirm')))) return
+    setLines([])
   }
 
   return (
@@ -99,11 +115,11 @@ export function EventsView() {
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={running}
+            disabled={running || starting}
             onClick={() => void start()}
             className="rounded-md bg-sky-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-sky-500 disabled:opacity-40"
           >
-            {t('events.start')}
+            {starting ? t('events.starting') : t('events.start')}
           </button>
           <button
             type="button"
@@ -115,7 +131,7 @@ export function EventsView() {
           </button>
           <button
             type="button"
-            onClick={() => setLines([])}
+            onClick={() => void onClear()}
             className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-[11px] dark:border-zinc-600 dark:bg-zinc-900"
           >
             {t('events.clear')}

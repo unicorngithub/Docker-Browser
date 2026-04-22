@@ -476,7 +476,7 @@ export function ContainerFilesWindowApp({
     }
     const res = await window.dockerDesktop.containerFsReadFile({ containerId, path: selected.path })
     if (!res.ok) {
-          await alertEngineError(alert, t, res.error)
+      await alertEngineError(alert, t, res.error)
       return
     }
     try {
@@ -524,6 +524,12 @@ export function ContainerFilesWindowApp({
       setMkdirName('')
       void reloadExpanded()
     }
+  }
+
+  const requestCloseMkdir = async () => {
+    if (mkdirName.trim() && !(await confirm(t('files.discardMkdirInput')))) return
+    setMkdirOpen(false)
+    setMkdirName('')
   }
 
   const rootEntries = childrenCache.get(rootPath)
@@ -730,7 +736,7 @@ export function ContainerFilesWindowApp({
         <div
           className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4"
           role="dialog"
-          onClick={() => setMkdirOpen(false)}
+          onClick={() => void requestCloseMkdir()}
         >
           <div
             className="w-full max-w-sm rounded-lg border border-zinc-200 bg-white p-3 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
@@ -747,7 +753,7 @@ export function ContainerFilesWindowApp({
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setMkdirOpen(false)}
+                onClick={() => void requestCloseMkdir()}
                 className="rounded border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
               >
                 {t('common.cancel')}
