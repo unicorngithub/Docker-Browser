@@ -4,58 +4,59 @@ import type { ThemePreference } from '../../shared/theme'
 import type { IpcResult } from '../../shared/ipc'
 import type { DockerLogsChunk } from '../../shared/dockerLogs'
 import type { DockerEventChunk } from '../../shared/dockerEvents'
+import { DockerIpc } from '../../shared/dockerIpcChannels'
 
 contextBridge.exposeInMainWorld('dockerDesktop', {
   ping(): Promise<IpcResult<string>> {
-    return ipcRenderer.invoke('docker:ping')
+    return ipcRenderer.invoke(DockerIpc.ping)
   },
   info(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke('docker:info')
+    return ipcRenderer.invoke(DockerIpc.info)
   },
   version(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke('docker:version')
+    return ipcRenderer.invoke(DockerIpc.version)
   },
   df(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke('docker:df')
+    return ipcRenderer.invoke(DockerIpc.df)
   },
   listContainers(opts?: { all?: boolean }): Promise<IpcResult<unknown[]>> {
-    return ipcRenderer.invoke('docker:list-containers', opts)
+    return ipcRenderer.invoke(DockerIpc.listContainers, opts)
   },
   inspectContainer(id: string): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke('docker:inspect-container', id)
+    return ipcRenderer.invoke(DockerIpc.inspectContainer, id)
   },
   startContainer(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:start-container', id)
+    return ipcRenderer.invoke(DockerIpc.startContainer, id)
   },
   stopContainer(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:stop-container', id)
+    return ipcRenderer.invoke(DockerIpc.stopContainer, id)
   },
   restartContainer(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:restart-container', id)
+    return ipcRenderer.invoke(DockerIpc.restartContainer, id)
   },
   killContainer(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:kill-container', id)
+    return ipcRenderer.invoke(DockerIpc.killContainer, id)
   },
   pauseContainer(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:pause-container', id)
+    return ipcRenderer.invoke(DockerIpc.pauseContainer, id)
   },
   unpauseContainer(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:unpause-container', id)
+    return ipcRenderer.invoke(DockerIpc.unpauseContainer, id)
   },
   removeContainer(payload: { id: string; force?: boolean; v?: boolean }): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:remove-container', payload)
+    return ipcRenderer.invoke(DockerIpc.removeContainer, payload)
   },
   listImages(): Promise<IpcResult<unknown[]>> {
-    return ipcRenderer.invoke('docker:list-images')
+    return ipcRenderer.invoke(DockerIpc.listImages)
   },
   inspectImage(name: string): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke('docker:inspect-image', name)
+    return ipcRenderer.invoke(DockerIpc.inspectImage, name)
   },
   removeImage(payload: { name: string; force?: boolean; noprune?: boolean }): Promise<IpcResult<unknown[]>> {
-    return ipcRenderer.invoke('docker:remove-image', payload)
+    return ipcRenderer.invoke(DockerIpc.removeImage, payload)
   },
   pullImage(repoTag: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:pull-image', repoTag)
+    return ipcRenderer.invoke(DockerIpc.pullImage, repoTag)
   },
   createRunContainer(payload: {
     image: string
@@ -66,7 +67,7 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
     autoRemove?: boolean
     restartPolicy?: string
   }): Promise<IpcResult<{ id: string }>> {
-    return ipcRenderer.invoke('docker:create-run-container', payload)
+    return ipcRenderer.invoke(DockerIpc.createRunContainer, payload)
   },
   recreateContainer(payload: {
     containerId: string
@@ -78,70 +79,142 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
     autoRemove?: boolean
     restartPolicy?: string
   }): Promise<IpcResult<{ id: string }>> {
-    return ipcRenderer.invoke('docker:recreate-container', payload)
+    return ipcRenderer.invoke(DockerIpc.recreateContainer, payload)
   },
   patchContainerRuntime(payload: {
     containerId: string
     name?: string
     restartPolicy?: string
+    memoryMb?: number
+    cpus?: number
+    pidsLimit?: number
   }): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:patch-container-runtime', payload)
+    return ipcRenderer.invoke(DockerIpc.patchContainerRuntime, payload)
   },
   tagImage(payload: { source: string; repo: string; tag?: string }): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:tag-image', payload)
+    return ipcRenderer.invoke(DockerIpc.tagImage, payload)
   },
   execOnce(payload: { containerId: string; command: string }): Promise<
     IpcResult<{ output: string; exitCode?: number }>
   > {
-    return ipcRenderer.invoke('docker:exec-once', payload)
+    return ipcRenderer.invoke(DockerIpc.execOnce, payload)
   },
   startEvents(opts?: { sinceUnix?: number }): Promise<IpcResult<{ subscriptionId: string }>> {
-    return ipcRenderer.invoke('docker:events:start', opts)
+    return ipcRenderer.invoke(DockerIpc.eventsStart, opts)
   },
   stopEvents(subscriptionId: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:events:stop', subscriptionId)
+    return ipcRenderer.invoke(DockerIpc.eventsStop, subscriptionId)
   },
   listNetworks(): Promise<IpcResult<unknown[]>> {
-    return ipcRenderer.invoke('docker:list-networks')
+    return ipcRenderer.invoke(DockerIpc.listNetworks)
   },
   removeNetwork(id: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:remove-network', id)
+    return ipcRenderer.invoke(DockerIpc.removeNetwork, id)
   },
   listVolumes(): Promise<IpcResult<unknown>> {
-    return ipcRenderer.invoke('docker:list-volumes')
+    return ipcRenderer.invoke(DockerIpc.listVolumes)
   },
   removeVolume(name: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:remove-volume', name)
+    return ipcRenderer.invoke(DockerIpc.removeVolume, name)
   },
   startLogs(opts: { containerId: string; tail?: number; timestamps?: boolean }): Promise<
     IpcResult<{ subscriptionId: string }>
   > {
-    return ipcRenderer.invoke('docker:logs:start', opts)
+    return ipcRenderer.invoke(DockerIpc.logsStart, opts)
   },
   stopLogs(subscriptionId: string): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:logs:stop', subscriptionId)
+    return ipcRenderer.invoke(DockerIpc.logsStop, subscriptionId)
   },
   openContainerLogsWindow(containerId: string): Promise<IpcResult<void>> {
     return ipcRenderer.invoke('app:open-container-logs-window', containerId)
   },
   openEngineDocs(): Promise<IpcResult<void>> {
-    return ipcRenderer.invoke('docker:open-docs')
+    return ipcRenderer.invoke(DockerIpc.openDocs)
+  },
+  pruneContainers(): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.pruneContainers)
+  },
+  pruneImages(opts?: { danglingOnly?: boolean }): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.pruneImages, opts ?? {})
+  },
+  pruneNetworks(): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.pruneNetworks)
+  },
+  pruneVolumes(): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.pruneVolumes)
+  },
+  pruneBuilder(): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.pruneBuilder)
+  },
+  systemPrune(opts?: { volumes?: boolean; allImages?: boolean }): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.systemPrune, opts ?? {})
+  },
+  createNetwork(payload: { name: string; driver?: string }): Promise<IpcResult<{ id: string }>> {
+    return ipcRenderer.invoke(DockerIpc.createNetwork, payload)
+  },
+  createVolume(payload: { name: string }): Promise<IpcResult<{ name: string }>> {
+    return ipcRenderer.invoke(DockerIpc.createVolume, payload)
+  },
+  networkConnect(payload: { networkId: string; containerId: string }): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.networkConnect, payload)
+  },
+  networkDisconnect(payload: {
+    networkId: string
+    containerId: string
+    force?: boolean
+  }): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.networkDisconnect, payload)
+  },
+  volumeUsedBy(volumeName: string): Promise<IpcResult<{ containerIds: string[] }>> {
+    return ipcRenderer.invoke(DockerIpc.volumeUsedBy, volumeName)
+  },
+  containerStatsOnce(containerId: string): Promise<IpcResult<unknown>> {
+    return ipcRenderer.invoke(DockerIpc.containerStatsOnce, containerId)
+  },
+  imageHistory(name: string): Promise<IpcResult<unknown[]>> {
+    return ipcRenderer.invoke(DockerIpc.imageHistory, name)
+  },
+  saveImageTar(payload: { name: string }): Promise<IpcResult<{ filePath: string }>> {
+    return ipcRenderer.invoke(DockerIpc.saveImageTar, payload)
+  },
+  loadImageTar(): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.loadImageTar)
+  },
+  commitContainer(payload: {
+    containerId: string
+    repo: string
+    tag?: string
+    comment?: string
+  }): Promise<IpcResult<{ id: string }>> {
+    return ipcRenderer.invoke(DockerIpc.commitContainer, payload)
+  },
+  exportContainerTar(payload: { containerId: string }): Promise<IpcResult<{ filePath: string }>> {
+    return ipcRenderer.invoke(DockerIpc.exportContainerTar, payload)
+  },
+  reconnectDocker(): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke(DockerIpc.reconnectDocker)
+  },
+  getDockerRuntimeEnv(): Promise<IpcResult<{ dockerHost: string; dockerContext: string }>> {
+    return ipcRenderer.invoke('app:get-docker-runtime-env')
+  },
+  getComposeVersion(): Promise<IpcResult<string>> {
+    return ipcRenderer.invoke('app:get-compose-version')
   },
   onLogsChunk(handler: (msg: DockerLogsChunk) => void): () => void {
     const wrap = (_e: Electron.IpcRendererEvent, msg: unknown) => {
       const m = msg as DockerLogsChunk
       if (m && typeof m.subscriptionId === 'string' && typeof m.text === 'string') handler(m)
     }
-    ipcRenderer.on('docker:logs:chunk', wrap)
-    return () => ipcRenderer.removeListener('docker:logs:chunk', wrap)
+    ipcRenderer.on(DockerIpc.logsChunk, wrap)
+    return () => ipcRenderer.removeListener(DockerIpc.logsChunk, wrap)
   },
   onEventsChunk(handler: (msg: DockerEventChunk) => void): () => void {
     const wrap = (_e: Electron.IpcRendererEvent, msg: unknown) => {
       const m = msg as DockerEventChunk
       if (m && typeof m.subscriptionId === 'string' && typeof m.line === 'string') handler(m)
     }
-    ipcRenderer.on('docker:events:chunk', wrap)
-    return () => ipcRenderer.removeListener('docker:events:chunk', wrap)
+    ipcRenderer.on(DockerIpc.eventsChunk, wrap)
+    return () => ipcRenderer.removeListener(DockerIpc.eventsChunk, wrap)
   },
 })
 

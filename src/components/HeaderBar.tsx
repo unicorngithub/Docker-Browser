@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LanguageSwitcher } from '@/components/LanguageSwitcher'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
@@ -16,6 +17,17 @@ export function HeaderBar() {
   const onRefresh = () => {
     void ping().then(() => loadTab(tab))
   }
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'F5') {
+        e.preventDefault()
+        void ping().then(() => loadTab(tab))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [ping, loadTab, tab])
 
   const onDocs = () => {
     void unwrapIpc(window.dockerDesktop.openEngineDocs()).catch(() => {})
@@ -63,6 +75,7 @@ export function HeaderBar() {
           type="button"
           onClick={onRefresh}
           disabled={busy}
+          title={t('header.refreshShortcut')}
           className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
         >
           {t('header.refresh')}

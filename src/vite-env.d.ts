@@ -47,6 +47,9 @@ export interface DockerDesktopApi {
     containerId: string
     name?: string
     restartPolicy?: string
+    memoryMb?: number
+    cpus?: number
+    pidsLimit?: number
   }): Promise<IpcResult<void>>
   tagImage(payload: { source: string; repo: string; tag?: string }): Promise<IpcResult<void>>
   execOnce(payload: { containerId: string; command: string }): Promise<
@@ -64,6 +67,35 @@ export interface DockerDesktopApi {
   stopLogs(subscriptionId: string): Promise<IpcResult<void>>
   openContainerLogsWindow(containerId: string): Promise<IpcResult<void>>
   openEngineDocs(): Promise<IpcResult<void>>
+  pruneContainers(): Promise<IpcResult<unknown>>
+  pruneImages(opts?: { danglingOnly?: boolean }): Promise<IpcResult<unknown>>
+  pruneNetworks(): Promise<IpcResult<unknown>>
+  pruneVolumes(): Promise<IpcResult<unknown>>
+  pruneBuilder(): Promise<IpcResult<unknown>>
+  systemPrune(opts?: { volumes?: boolean; allImages?: boolean }): Promise<IpcResult<unknown>>
+  createNetwork(payload: { name: string; driver?: string }): Promise<IpcResult<{ id: string }>>
+  createVolume(payload: { name: string }): Promise<IpcResult<{ name: string }>>
+  networkConnect(payload: { networkId: string; containerId: string }): Promise<IpcResult<void>>
+  networkDisconnect(payload: {
+    networkId: string
+    containerId: string
+    force?: boolean
+  }): Promise<IpcResult<void>>
+  volumeUsedBy(volumeName: string): Promise<IpcResult<{ containerIds: string[] }>>
+  containerStatsOnce(containerId: string): Promise<IpcResult<unknown>>
+  imageHistory(name: string): Promise<IpcResult<unknown[]>>
+  saveImageTar(payload: { name: string }): Promise<IpcResult<{ filePath: string }>>
+  loadImageTar(): Promise<IpcResult<void>>
+  commitContainer(payload: {
+    containerId: string
+    repo: string
+    tag?: string
+    comment?: string
+  }): Promise<IpcResult<{ id: string }>>
+  exportContainerTar(payload: { containerId: string }): Promise<IpcResult<{ filePath: string }>>
+  reconnectDocker(): Promise<IpcResult<void>>
+  getDockerRuntimeEnv(): Promise<IpcResult<{ dockerHost: string; dockerContext: string }>>
+  getComposeVersion(): Promise<IpcResult<string>>
   onLogsChunk(handler: (msg: DockerLogsChunk) => void): () => void
   onEventsChunk(handler: (msg: DockerEventChunk) => void): () => void
 }

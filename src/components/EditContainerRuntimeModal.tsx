@@ -17,6 +17,9 @@ export function EditContainerRuntimeModal({ open, containerId, onClose, onSaved 
   const [name, setName] = useState('')
   const [autoRemove, setAutoRemove] = useState(false)
   const [restartPolicy, setRestartPolicy] = useState<RestartPolicyName>('no')
+  const [memoryMbStr, setMemoryMbStr] = useState('')
+  const [cpusStr, setCpusStr] = useState('')
+  const [pidsStr, setPidsStr] = useState('')
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -35,19 +38,60 @@ export function EditContainerRuntimeModal({ open, containerId, onClose, onSaved 
       setAutoRemove(hc?.AutoRemove === true)
       const rp = hc?.RestartPolicy as { Name?: string } | undefined
       setRestartPolicy(normalizeRestartPolicyName(typeof rp?.Name === 'string' ? rp.Name : undefined))
+      let memStr = ''
+      if (typeof hc?.Memory === 'number' && hc.Memory > 0) {
+        memStr = String(Math.round(hc.Memory / 1024 / 1024))
+      }
+      setMemoryMbStr(memStr)
+      const nano = typeof hc?.NanoCpus === 'number' && hc.NanoCpus > 0 ? hc.NanoCpus / 1e9 : 0
+      setCpusStr(nano > 0 ? String(nano) : '')
+      const pl = typeof hc?.PidsLimit === 'number' && hc.PidsLimit > 0 ? hc.PidsLimit : ''
+      setPidsStr(pl === '' ? '' : String(pl))
     })
   }, [open, containerId])
 
   if (!open) return null
 
   const submit = async () => {
+    const patch: {
+      containerId: string
+      name: string
+      restartPolicy: RestartPolicyName
+      memoryMb?: number
+      cpus?: number
+      pidsLimit?: number
+    } = {
+      containerId,
+      name: name.trim(),
+      restartPolicy,
+    }
+      if (memoryMbStr.trim()) {
+      const v = Number(memoryMbStr.trim())
+      if (!Number.isFinite(v) || v < 0) {
+        await alert(t('containers.badNumber'))
+        return
+      }
+      patch.memoryMb = v
+    }
+    if (cpusStr.trim()) {
+      const v = Number(cpusStr.trim())
+      if (!Number.isFinite(v) || v < 0) {
+        await alert(t('containers.badNumber'))
+        return
+      }
+      patch.cpus = v
+    }
+    if (pidsStr.trim()) {
+      const v = Number(pidsStr.trim())
+      if (!Number.isFinite(v) || v < 0) {
+        await alert(t('containers.badNumber'))
+        return
+      }
+      patch.pidsLimit = Math.floor(v)
+    }
     setSubmitting(true)
     try {
-      const res = await window.dockerDesktop.patchContainerRuntime({
-        containerId,
-        name: name.trim(),
-        restartPolicy,
-      })
+      const res = await window.dockerDesktop.patchContainerRuntime(patch)
       if (!res.ok) throw new Error(res.error)
       onSaved()
       onClose()
@@ -97,6 +141,36 @@ export function EditContainerRuntimeModal({ open, containerId, onClose, onSaved 
             onChange={setRestartPolicy}
             disabled={autoRemove}
           />
+          <label className="block text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+            {t('containers.memoryMb')}
+            <input
+              value={memoryMbStr}
+              onChange={(e) => setMemoryMbStr(e.target.value)}
+              disabled={!!loadErr}
+              inputMode="decimal"
+              className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
+            />
+          </label>
+          <label className="block text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+            {t('containers.cpus')}
+            <input
+              value={cpusStr}
+              onChange={(e) => setCpusStr(e.target.value)}
+              disabled={!!loadErr}
+              inputMode="decimal"
+              className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
+            />
+          </label>
+          <label className="block text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
+            {t('containers.pidsLimit')}
+            <input
+              value={pidsStr}
+              onChange={(e) => setPidsStr(e.target.value)}
+              disabled={!!loadErr}
+              inputMode="numeric"
+              className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
+            />
+          </label>
         </div>
         <div className="mt-4 flex justify-end gap-2">
           <button

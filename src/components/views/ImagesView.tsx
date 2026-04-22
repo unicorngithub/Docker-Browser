@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { InspectJsonModal } from '@/components/InspectJsonModal'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
@@ -40,6 +41,8 @@ export function ImagesView() {
   const [tagRepo, setTagRepo] = useState('my-app')
   const [tagTag, setTagTag] = useState('latest')
   const [tagging, setTagging] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyText, setHistoryText] = useState('[]')
 
   const sel = images.find((im) => im.Id === selectedImageRef) ?? null
   const imageNameForApi = sel?.RepoTags?.[0] ?? sel?.Id ?? ''
@@ -95,8 +98,46 @@ export function ImagesView() {
     })
   }
 
+  const onPruneDangling = () => {
+    void run(async () => {
+      if (!(await confirm(t('images.pruneDanglingConfirm')))) return
+      await unwrapIpc(window.dockerDesktop.pruneImages({ danglingOnly: true }))
+    })
+  }
+
+  const onSaveTar = () => {
+    if (!imageNameForApi) return
+    void run(async () => {
+      const res = await window.dockerDesktop.saveImageTar({ name: imageNameForApi })
+      if (!res.ok) throw new Error(res.error)
+      await alert(res.data.filePath)
+    })
+  }
+
+  const onLoadTar = () => {
+    void run(async () => {
+      await unwrapIpc(window.dockerDesktop.loadImageTar())
+    })
+  }
+
+  const onHistory = () => {
+    if (!imageNameForApi) return
+    void run(async () => {
+      const res = await window.dockerDesktop.imageHistory(imageNameForApi)
+      if (!res.ok) throw new Error(res.error)
+      setHistoryText(JSON.stringify(res.data, null, 2))
+      setHistoryOpen(true)
+    })
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <InspectJsonModal
+        open={historyOpen}
+        title={t('images.historyTitle')}
+        jsonText={historyText}
+        onClose={() => setHistoryOpen(false)}
+      />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">{t('images.title')}</h2>
         <div className="flex flex-wrap items-center gap-2">
@@ -121,6 +162,38 @@ export function ImagesView() {
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
             {t('images.remove')}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void onPruneDangling()}
+            className="rounded-md border border-amber-400 px-2 py-1 text-[11px] text-amber-950 dark:border-amber-800 dark:text-amber-100"
+          >
+            {t('images.pruneDangling')}
+          </button>
+          <button
+            type="button"
+            disabled={!sel || busy || !imageNameForApi}
+            onClick={() => void onSaveTar()}
+            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] dark:border-zinc-600"
+          >
+            {t('images.saveTar')}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void onLoadTar()}
+            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] dark:border-zinc-600"
+          >
+            {t('images.loadTar')}
+          </button>
+          <button
+            type="button"
+            disabled={!sel || busy || !imageNameForApi}
+            onClick={() => void onHistory()}
+            className="rounded-md border border-zinc-300 px-2 py-1 text-[11px] dark:border-zinc-600"
+          >
+            {t('images.history')}
           </button>
         </div>
       </div>

@@ -10,6 +10,8 @@ import { localizeContainerState, localizeContainerStatus } from '@/lib/container
 import type { ContainerPortRow } from '@/lib/containerPortsDisplay'
 import { formatContainerPortsSummary } from '@/lib/containerPortsDisplay'
 import { groupContainersByComposeProject } from '@/lib/containerProjectGroup'
+import { redactSensitiveJson } from '@shared/redactSensitiveJson'
+import { InspectJsonModal } from '@/components/InspectJsonModal'
 
 type Row = {
   Id: string
@@ -45,6 +47,12 @@ export function ContainersView() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; containerId: string } | null>(null)
   const [runtimeConfigContainerId, setRuntimeConfigContainerId] = useState<string | null>(null)
   const [recreateConfigContainerId, setRecreateConfigContainerId] = useState<string | null>(null)
+  const [inspectOpen, setInspectOpen] = useState(false)
+  const [inspectTitle, setInspectTitle] = useState('')
+  const [inspectText, setInspectText] = useState('')
+  const [commitForId, setCommitForId] = useState<string | null>(null)
+  const [commitRepo, setCommitRepo] = useState('my/snapshot')
+  const [commitTag, setCommitTag] = useState('dev')
   const containers = useDockerStore((s) => s.containers) as Row[]
   const busy = useDockerStore((s) => s.busy)
   const selectedContainerId = useDockerStore((s) => s.selectedContainerId)
@@ -97,6 +105,53 @@ export function ContainersView() {
     })
   }
 
+  const openInspectRedacted = async (id: string) => {
+    const res = await window.dockerDesktop.inspectContainer(id)
+    if (!res.ok) {
+      await alert(res.error)
+      return
+    }
+    setInspectTitle(t('containers.inspectRedacted'))
+    setInspectText(JSON.stringify(redactSensitiveJson(res.data), null, 2))
+    setInspectOpen(true)
+  }
+
+  const openStats = async (id: string) => {
+    const res = await window.dockerDesktop.containerStatsOnce(id)
+    if (!res.ok) {
+      await alert(res.error)
+      return
+    }
+    setInspectTitle(t('containers.statsTitle'))
+    setInspectText(JSON.stringify(res.data, null, 2))
+    setInspectOpen(true)
+  }
+
+  const exportTar = async (id: string) => {
+    if (!(await confirm(t('containers.exportTarConfirm')))) return
+    void run(async () => {
+      const res = await window.dockerDesktop.exportContainerTar({ containerId: id })
+      if (!res.ok) throw new Error(res.error)
+      await alert(res.data.filePath)
+    })
+  }
+
+  const submitCommit = () => {
+    if (!commitForId) return
+    const repo = commitRepo.trim()
+    if (!repo) return
+    void run(async () => {
+      await unwrapIpc(
+        window.dockerDesktop.commitContainer({
+          containerId: commitForId,
+          repo,
+          tag: commitTag.trim() || 'latest',
+        }),
+      )
+      setCommitForId(null)
+    })
+  }
+
   const run = async (fn: () => Promise<void>) => {
     try {
       await fn()
@@ -145,6 +200,12 @@ export function ContainersView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
+      <InspectJsonModal
+        open={inspectOpen}
+        title={inspectTitle}
+        jsonText={inspectText}
+        onClose={() => setInspectOpen(false)}
+      />
       <CreateContainerModal
         open={showCreate}
         onClose={() => setShowCreate(false)}
@@ -407,6 +468,80 @@ export function ContainersView() {
             setCtxMenu({ x: e.clientX, y: e.clientY, containerId: sel.Id })
           }}
         >
+          <div className="mb-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void openInspectRedacted(sel.Id)}
+              className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
+            >
+              {t('containers.inspectRedacted')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void openStats(sel.Id)}
+              className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
+            >
+              {t('containers.statsOnce')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void exportTar(sel.Id)}
+              className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
+            >
+              {t('containers.exportTar')}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => setCommitForId(sel.Id)}
+              className="rounded-md border border-emerald-400 px-2 py-1 text-[10px] text-emerald-900 dark:border-emerald-800 dark:text-emerald-100"
+            >
+              {t('containers.commitImage')}
+            </button>
+          </div>
+          {commitForId === sel.Id ? (
+            <div className="mb-3 rounded-md border border-amber-200/80 bg-amber-50/80 p-2 dark:border-amber-900/50 dark:bg-amber-950/20">
+              <div className="mb-2 text-[10px] font-semibold text-amber-950 dark:text-amber-100">
+                {t('containers.commitImage')}
+              </div>
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="flex flex-col gap-0.5 text-[10px]">
+                  <span className="text-zinc-600 dark:text-zinc-400">{t('containers.commitRepo')}</span>
+                  <input
+                    value={commitRepo}
+                    onChange={(e) => setCommitRepo(e.target.value)}
+                    className="w-44 rounded border border-zinc-300 bg-white px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+                  />
+                </label>
+                <label className="flex flex-col gap-0.5 text-[10px]">
+                  <span className="text-zinc-600 dark:text-zinc-400">{t('containers.commitTag')}</span>
+                  <input
+                    value={commitTag}
+                    onChange={(e) => setCommitTag(e.target.value)}
+                    className="w-28 rounded border border-zinc-300 bg-white px-2 py-1 font-mono dark:border-zinc-600 dark:bg-zinc-950"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || !commitRepo.trim()}
+                  onClick={() => void submitCommit()}
+                  className="rounded-md bg-emerald-600 px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-40"
+                >
+                  {t('common.confirm')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCommitForId(null)}
+                  className="rounded-md border border-zinc-300 px-2 py-1 text-[10px] dark:border-zinc-600"
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+          ) : null}
           <h3 className="mb-1 text-[11px] font-semibold text-zinc-800 dark:text-zinc-200">
             {t('containers.execTitle')}
           </h3>
@@ -442,6 +577,17 @@ export function ContainersView() {
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onMouseDown={(e) => e.stopPropagation()}
         >
+          <button
+            type="button"
+            role="menuitem"
+            className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            onClick={() => {
+              void openInspectRedacted(ctxMenu.containerId)
+              setCtxMenu(null)
+            }}
+          >
+            {t('containers.inspectRedacted')}
+          </button>
           <button
             type="button"
             role="menuitem"

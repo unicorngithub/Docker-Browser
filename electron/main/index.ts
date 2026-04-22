@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import type { AppLanguage } from '../../shared/locale'
 import type { ThemePreference } from '../../shared/theme'
-import { ipcErr, ipcOk } from '../../shared/ipc'
+import { ipcErr, ipcOk, type IpcResult } from '../../shared/ipc'
+import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import os from 'node:os'
@@ -10,6 +11,33 @@ import { openExternalUrlIfAllowed } from './openExternalPolicy'
 import { registerDockerIpc } from './ipcDocker'
 
 registerDockerIpc()
+
+ipcMain.handle(
+  'app:get-docker-runtime-env',
+  async (): Promise<IpcResult<{ dockerHost: string; dockerContext: string }>> => {
+    return ipcOk({
+      dockerHost: process.env.DOCKER_HOST ?? '',
+      dockerContext: process.env.DOCKER_CONTEXT ?? '',
+    })
+  },
+)
+
+ipcMain.handle('app:get-compose-version', async (): Promise<IpcResult<string>> => {
+  try {
+    const r = spawnSync('docker', ['compose', 'version'], {
+      encoding: 'utf8',
+      timeout: 12_000,
+    })
+    if (r.error) return ipcErr(r.error.message)
+    if (r.status !== 0) {
+      const msg = (r.stderr || r.stdout || '').trim() || 'docker compose failed'
+      return ipcErr(msg)
+    }
+    return ipcOk((r.stdout || '').trim() || 'ok')
+  } catch (e) {
+    return ipcErr(e instanceof Error ? e.message : String(e))
+  }
+})
 
 ipcMain.on('app:theme-preference-changed', (_, pref: unknown) => {
   if (pref !== 'light' && pref !== 'dark' && pref !== 'system') return

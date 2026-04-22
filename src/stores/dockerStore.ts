@@ -82,8 +82,11 @@ export const useDockerStore = create<DockerState>((set, get) => ({
         const list = await unwrapIpc(dk.listImages())
         set({ images: list })
       } else if (t === 'networks') {
-        const list = await unwrapIpc(dk.listNetworks())
-        set({ networks: list })
+        const [list, ctr] = await Promise.all([
+          unwrapIpc(dk.listNetworks()),
+          unwrapIpc(dk.listContainers({ all: true })),
+        ])
+        set({ networks: list, containers: ctr })
       } else if (t === 'volumes') {
         const res = (await unwrapIpc(dk.listVolumes())) as { Volumes?: unknown[] }
         set({ volumeList: res.Volumes ?? [] })

@@ -1,10 +1,14 @@
-import { app, ipcMain, shell, type WebContents } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { finished } from 'node:stream/promises'
+import { pipeline } from 'node:stream/promises'
 import type { Readable } from 'node:stream'
 import type { ContainerCreateOptions, HostConfig } from 'dockerode'
 import type { DockerLogsChunk } from '../../shared/dockerLogs'
+import { DockerIpc } from '../../shared/dockerIpcChannels'
 import { ipcErr, ipcOk, type IpcResult } from '../../shared/ipc'
-import { getDocker } from './dockerClient'
+import { getDocker, resetDockerClient } from './dockerClient'
 import { demuxDockerLogStream } from './dockerLogDemux'
 import { normalizeRestartPolicyName, restartPolicyToDocker } from '../../shared/restartPolicy'
 import { parseEnvLines, parsePortPublish } from './dockerCreateHelpers'
@@ -22,6 +26,10 @@ let registered = false
 
 function docker() {
   return getDocker()
+}
+
+function senderWindow(evt: { sender: WebContents }): BrowserWindow | null {
+  return BrowserWindow.fromWebContents(evt.sender) ?? BrowserWindow.getFocusedWindow()
 }
 
 export function registerDockerIpc(): void {
@@ -308,7 +316,7 @@ export function registerDockerIpc(): void {
 
         const sendText = (text: string) => {
           if (wc.isDestroyed()) return
-          wc.send('docker:logs:chunk', { subscriptionId, text } satisfies DockerLogsChunk)
+          wc.send(DockerIpc.logsChunk, { subscriptionId, text } satisfies DockerLogsChunk)
         }
 
         const destroyStream = () => {
@@ -473,20 +481,28 @@ export function registerDockerIpc(): void {
   )
 
   ipcMain.handle(
-    'docker:patch-container-runtime',
+    DockerIpc.patchContainerRuntime,
     async (_evt, payload: unknown): Promise<IpcResult<void>> => {
-      const p = payload as { containerId?: string; name?: string; restartPolicy?: string }
+      const p = payload as {
+        containerId?: string
+        name?: string
+        restartPolicy?: string
+        memoryMb?: number
+        cpus?: number
+        pidsLimit?: number
+      }
       const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
       if (!containerId) return ipcErr('containerId is required')
 
       try {
         const c = docker().getContainer(containerId)
         const ins = await c.inspect()
+        const hc = ins.HostConfig ?? {}
 
         const newRp = normalizeRestartPolicyName(
           typeof p.restartPolicy === 'string' ? p.restartPolicy : 'no',
         )
-        if (ins.HostConfig?.AutoRemove === true && newRp !== 'no') {
+        if (hc.AutoRemove === true && newRp !== 'no') {
           return ipcErr(
             'Auto-remove containers only support restart policy "no" (Docker engine limitation).',
           )
@@ -497,9 +513,12 @@ export function registerDockerIpc(): void {
           .toLowerCase()
         const raw = typeof p.name === 'string' ? p.name.trim().replace(/^\/+/, '') : ''
         const targetName = raw === '' ? currentName : raw.toLowerCase()
+        const nameChanged = targetName !== currentName
 
-        const existingRp = normalizeRestartPolicyName(ins.HostConfig?.RestartPolicy?.Name)
-        const curPolicy = ins.HostConfig?.RestartPolicy as
+        const existingRp = normalizeRestartPolicyName(
+          (hc.RestartPolicy as { Name?: string } | undefined)?.Name,
+        )
+        const curPolicy = hc.RestartPolicy as
           | { Name?: string; MaximumRetryCount?: number }
           | undefined
         let restartChanged = existingRp !== newRp
@@ -509,16 +528,30 @@ export function registerDockerIpc(): void {
           restartChanged = curCount !== 5
         }
 
-        const nameChanged = targetName !== currentName
+        const updateBody: Record<string, unknown> = {}
+        if (restartChanged) updateBody.RestartPolicy = restartPolicyToDocker(newRp)
 
-        if (!nameChanged && !restartChanged) return ipcOk(undefined)
+        if (typeof p.memoryMb === 'number' && Number.isFinite(p.memoryMb)) {
+          const mem = p.memoryMb <= 0 ? 0 : Math.floor(p.memoryMb * 1024 * 1024)
+          const curMem = typeof hc.Memory === 'number' ? hc.Memory : 0
+          if (mem !== curMem) updateBody.Memory = mem
+        }
+        if (typeof p.cpus === 'number' && Number.isFinite(p.cpus)) {
+          const nanos = p.cpus <= 0 ? 0 : Math.round(p.cpus * 1e9)
+          const curNano = typeof hc.NanoCpus === 'number' ? hc.NanoCpus : 0
+          if (nanos !== curNano) updateBody.NanoCpus = nanos
+        }
+        if (typeof p.pidsLimit === 'number' && Number.isFinite(p.pidsLimit)) {
+          const lim = p.pidsLimit <= 0 ? 0 : Math.floor(p.pidsLimit)
+          const curP = typeof hc.PidsLimit === 'number' ? hc.PidsLimit : 0
+          if (lim !== curP) updateBody.PidsLimit = lim
+        }
 
-        if (nameChanged) {
-          await c.rename({ name: targetName })
-        }
-        if (restartChanged) {
-          await c.update({ RestartPolicy: restartPolicyToDocker(newRp) })
-        }
+        const needUpdate = Object.keys(updateBody).length > 0
+        if (!nameChanged && !needUpdate) return ipcOk(undefined)
+
+        if (nameChanged) await c.rename({ name: targetName })
+        if (needUpdate) await c.update(updateBody)
 
         return ipcOk(undefined)
       } catch (e) {
@@ -617,7 +650,7 @@ export function registerDockerIpc(): void {
         let buf = ''
         const sendLine = (line: string) => {
           if (wc.isDestroyed()) return
-          wc.send('docker:events:chunk', { subscriptionId, line })
+          wc.send(DockerIpc.eventsChunk, { subscriptionId, line })
         }
 
         const onData = (chunk: Buffer) => {
@@ -679,7 +712,307 @@ export function registerDockerIpc(): void {
     },
   )
 
-  ipcMain.handle('docker:open-docs', async (): Promise<IpcResult<void>> => {
+  ipcMain.handle(DockerIpc.pruneContainers, async (): Promise<IpcResult<unknown>> => {
+    try {
+      return ipcOk(await docker().pruneContainers())
+    } catch (e) {
+      return ipcErr(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  ipcMain.handle(
+    DockerIpc.pruneImages,
+    async (_evt, payload: unknown): Promise<IpcResult<unknown>> => {
+      const danglingOnly = (payload as { danglingOnly?: boolean } | undefined)?.danglingOnly !== false
+      try {
+        const opts = danglingOnly ? { filters: { dangling: ['true'] } } : {}
+        return ipcOk(await docker().pruneImages(opts))
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(DockerIpc.pruneNetworks, async (): Promise<IpcResult<unknown>> => {
+    try {
+      return ipcOk(await docker().pruneNetworks())
+    } catch (e) {
+      return ipcErr(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  ipcMain.handle(DockerIpc.pruneVolumes, async (): Promise<IpcResult<unknown>> => {
+    try {
+      return ipcOk(await docker().pruneVolumes())
+    } catch (e) {
+      return ipcErr(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  ipcMain.handle(DockerIpc.pruneBuilder, async (): Promise<IpcResult<unknown>> => {
+    try {
+      return ipcOk(await docker().pruneBuilder())
+    } catch (e) {
+      return ipcErr(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  ipcMain.handle(
+    DockerIpc.systemPrune,
+    async (_evt, payload: unknown): Promise<IpcResult<unknown>> => {
+      const p = payload as { volumes?: boolean; allImages?: boolean }
+      try {
+        const d = docker()
+        const out: Record<string, unknown> = {}
+        out.containers = await d.pruneContainers()
+        out.networks = await d.pruneNetworks()
+        out.images = await d.pruneImages(
+          p.allImages === true ? {} : { filters: { dangling: ['true'] } },
+        )
+        if (p.volumes === true) out.volumes = await d.pruneVolumes()
+        try {
+          out.builder = await d.pruneBuilder()
+        } catch {
+          /* builder prune optional */
+        }
+        return ipcOk(out)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.createNetwork,
+    async (_evt, payload: unknown): Promise<IpcResult<{ id: string }>> => {
+      const p = payload as { name?: string; driver?: string }
+      const name = typeof p.name === 'string' ? p.name.trim() : ''
+      if (!name) return ipcErr('name is required')
+      const driver = typeof p.driver === 'string' && p.driver.trim() ? p.driver.trim() : 'bridge'
+      try {
+        const net = await docker().createNetwork({
+          Name: name,
+          Driver: driver,
+          CheckDuplicate: true,
+        })
+        return ipcOk({ id: net.id })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.createVolume,
+    async (_evt, payload: unknown): Promise<IpcResult<{ name: string }>> => {
+      const p = payload as { name?: string }
+      const name = typeof p.name === 'string' ? p.name.trim() : ''
+      if (!name) return ipcErr('name is required')
+      try {
+        await docker().createVolume({ Name: name })
+        return ipcOk({ name })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.networkConnect,
+    async (_evt, payload: unknown): Promise<IpcResult<void>> => {
+      const p = payload as { networkId?: string; containerId?: string }
+      const networkId = typeof p.networkId === 'string' ? p.networkId.trim() : ''
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!networkId || !containerId) return ipcErr('networkId and containerId are required')
+      try {
+        const net = docker().getNetwork(networkId)
+        await net.connect({ Container: containerId })
+        return ipcOk(undefined)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.networkDisconnect,
+    async (_evt, payload: unknown): Promise<IpcResult<void>> => {
+      const p = payload as { networkId?: string; containerId?: string; force?: boolean }
+      const networkId = typeof p.networkId === 'string' ? p.networkId.trim() : ''
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!networkId || !containerId) return ipcErr('networkId and containerId are required')
+      try {
+        const net = docker().getNetwork(networkId)
+        await net.disconnect({ Container: containerId, Force: p.force === true })
+        return ipcOk(undefined)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.volumeUsedBy,
+    async (_evt, volumeName: unknown): Promise<IpcResult<{ containerIds: string[] }>> => {
+      if (typeof volumeName !== 'string' || !volumeName.trim()) return ipcErr('volume name required')
+      const name = volumeName.trim()
+      try {
+        const list = await docker().listContainers({ all: true })
+        const containerIds: string[] = []
+        for (const row of list) {
+          const mounts = row.Mounts as { Type?: string; Name?: string }[] | undefined
+          if (mounts?.some((m) => m.Type === 'volume' && m.Name === name)) {
+            if (typeof row.Id === 'string') containerIds.push(row.Id)
+          }
+        }
+        return ipcOk({ containerIds })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.containerStatsOnce,
+    async (_evt, id: unknown): Promise<IpcResult<unknown>> => {
+      if (typeof id !== 'string' || !id) return ipcErr('invalid id')
+      try {
+        const c = docker().getContainer(id)
+        const stats = await c.stats({ stream: false })
+        return ipcOk(stats)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.imageHistory,
+    async (_evt, name: unknown): Promise<IpcResult<unknown[]>> => {
+      if (typeof name !== 'string' || !name) return ipcErr('invalid name')
+      try {
+        const img = docker().getImage(name)
+        const h = await img.history()
+        return ipcOk(Array.isArray(h) ? h : [])
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.saveImageTar,
+    async (evt, payload: unknown): Promise<IpcResult<{ filePath: string }>> => {
+      const p = payload as { name?: string }
+      const name = typeof p.name === 'string' ? p.name.trim() : ''
+      if (!name) return ipcErr('image name is required')
+      const win = senderWindow(evt)
+      if (!win) return ipcErr('No window for file dialog')
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        title: 'Save image',
+        defaultPath: 'image.tar',
+        filters: [{ name: 'Tar', extensions: ['tar'] }],
+      })
+      if (canceled || !filePath) return ipcErr('cancelled')
+      try {
+        const stream = (await docker().getImage(name).get()) as Readable
+        await pipeline(stream, createWriteStream(filePath))
+        return ipcOk({ filePath })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.loadImageTar,
+    async (evt): Promise<IpcResult<void>> => {
+      const win = senderWindow(evt)
+      if (!win) return ipcErr('No window for file dialog')
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        title: 'Load image',
+        properties: ['openFile'],
+        filters: [{ name: 'Tar', extensions: ['tar'] }],
+      })
+      if (canceled || !filePaths?.[0]) return ipcErr('cancelled')
+      try {
+        const rs = createReadStream(filePaths[0])
+        const resp = await docker().loadImage(rs)
+        if (resp && typeof (resp as Readable).on === 'function') {
+          await finished(resp as Readable)
+        }
+        return ipcOk(undefined)
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.commitContainer,
+    async (_evt, payload: unknown): Promise<IpcResult<{ id: string }>> => {
+      const p = payload as { containerId?: string; repo?: string; tag?: string; comment?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      const repo = typeof p.repo === 'string' ? p.repo.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      if (!repo) return ipcErr('repo is required')
+      const tag = typeof p.tag === 'string' && p.tag.trim() ? p.tag.trim() : 'latest'
+      try {
+        const c = docker().getContainer(containerId)
+        const res = await c.commit({
+          repo,
+          tag,
+          comment: typeof p.comment === 'string' ? p.comment : undefined,
+        })
+        const id =
+          typeof (res as { Id?: string }).Id === 'string'
+            ? (res as { Id: string }).Id
+            : typeof (res as { id?: string }).id === 'string'
+              ? (res as { id: string }).id
+              : ''
+        if (!id) return ipcErr('commit returned no image id')
+        return ipcOk({ id })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    DockerIpc.exportContainerTar,
+    async (evt, payload: unknown): Promise<IpcResult<{ filePath: string }>> => {
+      const p = payload as { containerId?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+      const win = senderWindow(evt)
+      if (!win) return ipcErr('No window for file dialog')
+      const { canceled, filePath } = await dialog.showSaveDialog(win, {
+        title: 'Export container',
+        defaultPath: 'container-export.tar',
+        filters: [{ name: 'Tar', extensions: ['tar'] }],
+      })
+      if (canceled || !filePath) return ipcErr('cancelled')
+      try {
+        const stream = (await docker().getContainer(containerId).export()) as Readable
+        await pipeline(stream, createWriteStream(filePath))
+        return ipcOk({ filePath })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(DockerIpc.reconnectDocker, async (): Promise<IpcResult<void>> => {
+    try {
+      resetDockerClient()
+      await docker().ping()
+      return ipcOk(undefined)
+    } catch (e) {
+      return ipcErr(e instanceof Error ? e.message : String(e))
+    }
+  })
+
+  ipcMain.handle(DockerIpc.openDocs, async (): Promise<IpcResult<void>> => {
     void shell.openExternal('https://docs.docker.com/engine/api/latest/')
     return ipcOk(undefined)
   })

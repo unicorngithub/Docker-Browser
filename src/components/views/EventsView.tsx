@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useAppDialog } from '@/dialog/AppDialogContext'
 
@@ -30,9 +30,16 @@ export function EventsView() {
   const { t } = useTranslation()
   const { alert } = useAppDialog()
   const [lines, setLines] = useState<string[]>([])
+  const [filter, setFilter] = useState('')
   const [subId, setSubId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const subRef = useRef<string | null>(null)
+
+  const filteredLines = useMemo(() => {
+    const q = filter.trim().toLowerCase()
+    if (!q) return lines
+    return lines.filter((l) => l.toLowerCase().includes(q))
+  }, [lines, filter])
 
   useEffect(() => {
     subRef.current = subId
@@ -114,8 +121,17 @@ export function EventsView() {
           </button>
         </div>
       </div>
+      <label className="flex max-w-md flex-col gap-0.5 text-[10px] text-zinc-600 dark:text-zinc-400">
+        <span>{t('events.filterLabel')}</span>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={t('events.filterPlaceholder')}
+          className="rounded-md border border-zinc-300 bg-white px-2 py-1 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
+        />
+      </label>
       <pre className="min-h-0 flex-1 overflow-auto rounded-lg border border-zinc-200/80 bg-zinc-100/80 p-2 font-mono text-[10px] leading-relaxed text-zinc-800 dark:border-white/[0.06] dark:bg-black/30 dark:text-zinc-200">
-        {lines.length ? lines.join('\n') : t('events.empty')}
+        {filteredLines.length ? filteredLines.join('\n') : t('events.empty')}
       </pre>
     </div>
   )
