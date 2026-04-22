@@ -1,0 +1,82 @@
+import { useTranslation } from 'react-i18next'
+import { LanguageSwitcher } from '@/components/LanguageSwitcher'
+import { ThemeSwitcher } from '@/components/ThemeSwitcher'
+import { useDockerStore } from '@/stores/dockerStore'
+import { unwrapIpc } from '@/lib/ipc'
+
+export function HeaderBar() {
+  const { t } = useTranslation()
+  const connectionOk = useDockerStore((s) => s.connectionOk)
+  const busy = useDockerStore((s) => s.busy)
+  const globalError = useDockerStore((s) => s.globalError)
+  const tab = useDockerStore((s) => s.tab)
+  const ping = useDockerStore((s) => s.ping)
+  const loadTab = useDockerStore((s) => s.loadTab)
+
+  const onRefresh = () => {
+    void ping().then(() => loadTab(tab))
+  }
+
+  const onDocs = () => {
+    void unwrapIpc(window.dockerDesktop.openEngineDocs()).catch(() => {})
+  }
+
+  return (
+    <header className="flex shrink-0 items-center justify-between gap-3 border-b border-zinc-200/80 bg-white/70 px-4 py-2.5 backdrop-blur dark:border-white/[0.06] dark:bg-zinc-950/70">
+      <div className="flex min-w-0 items-center gap-3">
+        <h1 className="truncate text-sm font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
+          {t('app.title')}
+        </h1>
+        <span
+          className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+            connectionOk === true
+              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+              : connectionOk === false
+                ? 'border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-200'
+                : 'border-zinc-200 bg-zinc-100 text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400'
+          }`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${
+              connectionOk === true
+                ? 'bg-emerald-500'
+                : connectionOk === false
+                  ? 'bg-rose-500'
+                  : 'bg-zinc-400'
+            }`}
+            aria-hidden
+          />
+          {connectionOk === true
+            ? t('header.connected')
+            : connectionOk === false
+              ? t('header.disconnected')
+              : '…'}
+        </span>
+        {globalError ? (
+          <span className="hidden max-w-[240px] truncate text-[10px] text-rose-600 dark:text-rose-400 md:inline">
+            {globalError}
+          </span>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={busy}
+          className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        >
+          {t('header.refresh')}
+        </button>
+        <button
+          type="button"
+          onClick={onDocs}
+          className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-[11px] font-medium text-zinc-800 shadow-sm hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        >
+          {t('header.openDocs')}
+        </button>
+        <ThemeSwitcher />
+        <LanguageSwitcher />
+      </div>
+    </header>
+  )
+}

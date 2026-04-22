@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  html,
+  body {
+    @apply m-0 h-full overflow-hidden;
+  }
+
+  #root {
+    @apply m-0 flex h-full min-h-0 flex-col overflow-hidden select-none;
+  }
+
+  #root input,
+  #root textarea,
+  #root pre,
+  #root code {
+    @apply select-text;
+  }
+
+  body {
+    @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  button {
+    @apply font-sans;
+  }
+}

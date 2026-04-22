@@ -1,0 +1,53 @@
+{
+  "name": "docker-browser",
+  "version": "0.1.0",
+  "main": "dist-electron/main/index.js",
+  "description": "Docker Browser — Electron desktop client for local Docker Engine management.",
+  "author": "Guo's",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  },
+  "debug": {
+    "env": {
+      "VITE_DEV_SERVER_URL": "http://127.0.0.1:7788/"
+    }
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "dist": "pnpm run build && electron-builder --publish never",
+    "dist:dir": "pnpm run build && electron-builder --dir --publish never",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.2",
+    "i18next": "^26.0.3",
+    "react-i18next": "^17.0.2",
+    "zustand": "^5.0.12"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^4.0.1",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "electron": "^33.2.0",
+    "electron-builder": "^24.13.3",
+    "postcss": "^8.4.49",
+    "postcss-import": "^16.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.4.2",
+    "vite": "^5.4.11",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  }
+}

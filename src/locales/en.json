@@ -1,0 +1,152 @@
+{
+  "app": { "title": "Docker Browser" },
+  "nav": {
+    "containers": "Containers",
+    "images": "Images",
+    "networks": "Networks",
+    "volumes": "Volumes",
+    "events": "Events",
+    "system": "System"
+  },
+  "header": {
+    "refresh": "Refresh",
+    "connected": "Engine reachable",
+    "disconnected": "Engine unreachable",
+    "openDocs": "API docs"
+  },
+  "theme": { "light": "Light", "dark": "Dark", "system": "System" },
+  "lang": { "switchToEn": "English UI", "switchToZh": "Chinese UI" },
+  "common": {
+    "loading": "Loading…",
+    "error": "Error",
+    "actions": "Actions",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "id": "ID",
+    "name": "Name",
+    "image": "Image",
+    "state": "State",
+    "status": "Status",
+    "size": "Size",
+    "driver": "Driver",
+    "scope": "Scope",
+    "tags": "Tags",
+    "created": "Created",
+    "mount": "Mountpoint",
+    "details": "Details",
+    "forceRemove": "Force remove",
+    "removeVol": "Remove volume"
+  },
+  "containers": {
+    "title": "Containers",
+    "createRun": "Create & run",
+    "execTitle": "Run command once (shell)",
+    "execHint": "Runs as sh -c inside the container. Requires /bin/sh (common on Linux images).",
+    "execRun": "Run",
+    "start": "Start",
+    "stop": "Stop",
+    "restart": "Restart",
+    "kill": "Kill",
+    "pause": "Pause",
+    "unpause": "Unpause",
+    "remove": "Remove",
+    "removeConfirm": "Remove this container? Stopped containers can still be removed with force.",
+    "configMenu": "Settings",
+    "configTitle": "Container configuration",
+    "configHint": "Saving stops and removes this container, then creates and starts a new one with your settings. Bind mounts and most host options are preserved from the original inspect data. Anonymous volume data may be lost — back up first.",
+    "configSubmit": "Save & recreate",
+    "configRecreateConfirm": "The current container will be removed (after stop) and recreated with the edited configuration. Continue?",
+    "configImageRequired": "Image is required.",
+    "projectGroup": "Project",
+    "projectUngrouped": "Ungrouped",
+    "treeExpandHint": "Expand project “{{name}}”",
+    "treeCollapseHint": "Collapse project “{{name}}”",
+    "copyIdTitle": "Copy full container ID",
+    "copyIdFailed": "Could not copy to clipboard.",
+    "portsColumnTitle": "Ports (host:container)",
+    "portsColumnHint": "One mapping per line: left of \" : \" is the host publish side, right is container port/protocol. Host \"—\" means EXPOSE only, not published to the host.",
+    "portsNone": "No published or exposed ports",
+    "stateValues": {
+      "created": "Created",
+      "restarting": "Restarting",
+      "running": "Running",
+      "removing": "Removing",
+      "paused": "Paused",
+      "exited": "Exited",
+      "dead": "Dead",
+      "other": "{{raw}}"
+    },
+    "statusPattern": {
+      "up": "Up {{rest}}",
+      "upHealthy": "Up {{rest}} (healthy)",
+      "upUnhealthy": "Up {{rest}} (unhealthy)",
+      "upHealthStarting": "Up {{rest}} (health: starting)",
+      "upPaused": "Up {{rest}} (paused)",
+      "exited": "Exited ({{code}}){{tail}}",
+      "restarting": "Restarting{{count}}{{tail}}",
+      "created": "Created",
+      "dead": "Dead",
+      "removing": "Removing",
+      "paused": "Paused",
+      "fallback": "{{raw}}"
+    }
+  },
+  "images": {
+    "title": "Images",
+    "tagSource": "Tag from",
+    "tagRepo": "Repository",
+    "tagLabel": "Tag",
+    "tagAction": "Tag image",
+    "pull": "Pull",
+    "pullPlaceholder": "e.g. nginx:latest",
+    "pulling": "Pulling…",
+    "remove": "Remove",
+    "removeConfirm": "Remove this image?"
+  },
+  "networks": {
+    "title": "Networks",
+    "remove": "Remove",
+    "removeConfirm": "Remove this network?"
+  },
+  "volumes": {
+    "title": "Volumes",
+    "removeConfirm": "Delete this volume? Data will be lost."
+  },
+  "events": {
+    "title": "Docker events",
+    "subtitle": "Engine event stream (JSON lines, summarized).",
+    "start": "Subscribe",
+    "stop": "Unsubscribe",
+    "clear": "Clear",
+    "empty": "Start subscription to see live events."
+  },
+  "create": {
+    "title": "Create and start container",
+    "hint": "Creates the container then starts it. Port format: host:container (e.g. 8080:80). CMD is split by spaces unless you leave it empty to use the image default.",
+    "image": "Image",
+    "name": "Name",
+    "namePlaceholder": "optional, lowercase",
+    "publish": "Publish ports",
+    "env": "Environment (KEY=VAL per line)",
+    "cmd": "Override command (argv, space-separated)",
+    "cmdPlaceholder": "e.g. nginx -g daemon off;",
+    "autoRemove": "Auto-remove when container exits",
+    "submit": "Create & start"
+  },
+  "system": {
+    "title": "System",
+    "info": "Engine info",
+    "version": "Version",
+    "disk": "Disk usage (docker system df)"
+  },
+  "logs": {
+    "title": "Container logs (live)",
+    "hint": "Right-click a container row or the bottom details panel to open logs in a separate window (draggable outside the main window).",
+    "windowMissingId": "Missing container id in the URL; cannot open the log window.",
+    "start": "Start",
+    "stop": "Stop",
+    "clear": "Clear",
+    "tail": "Tail lines",
+    "timestamps": "Timestamps"
+  }
+}

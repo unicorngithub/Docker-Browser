@@ -1,0 +1,152 @@
+{
+  "app": { "title": "Docker Browser" },
+  "nav": {
+    "containers": "容器",
+    "images": "镜像",
+    "networks": "网络",
+    "volumes": "数据卷",
+    "events": "事件",
+    "system": "系统"
+  },
+  "header": {
+    "refresh": "刷新",
+    "connected": "引擎可连接",
+    "disconnected": "无法连接引擎",
+    "openDocs": "API 文档"
+  },
+  "theme": { "light": "浅色", "dark": "深色", "system": "跟随系统" },
+  "lang": { "switchToEn": "英文界面", "switchToZh": "中文界面" },
+  "common": {
+    "loading": "加载中…",
+    "error": "错误",
+    "actions": "操作",
+    "confirm": "确定",
+    "cancel": "取消",
+    "id": "ID",
+    "name": "名称",
+    "image": "镜像",
+    "state": "状态",
+    "status": "说明",
+    "size": "大小",
+    "driver": "驱动",
+    "scope": "范围",
+    "tags": "标签",
+    "created": "创建时间",
+    "mount": "挂载点",
+    "details": "详情",
+    "forceRemove": "强制删除",
+    "removeVol": "删除卷"
+  },
+  "containers": {
+    "title": "容器",
+    "createRun": "创建并运行",
+    "execTitle": "一次性执行命令（shell）",
+    "execHint": "在容器内以 sh -c 执行，需镜像内存在 /bin/sh（多数 Linux 镜像可用）。",
+    "execRun": "执行",
+    "start": "启动",
+    "stop": "停止",
+    "restart": "重启",
+    "kill": "强制终止",
+    "pause": "暂停",
+    "unpause": "恢复",
+    "remove": "删除",
+    "removeConfirm": "删除该容器？若仍在运行可先停止或使用强制删除。",
+    "configMenu": "配置",
+    "configTitle": "容器配置",
+    "configHint": "保存后会先停止并删除当前容器，再按下方选项创建并启动新容器；挂载目录等多数 Host 配置会从当前容器继承。匿名卷内数据可能丢失，请先备份。",
+    "configSubmit": "保存并重建",
+    "configRecreateConfirm": "将停止并删除当前容器，再以新配置重建并启动。是否继续？",
+    "configImageRequired": "请填写镜像。",
+    "projectGroup": "",
+    "projectUngrouped": "未分组",
+    "treeExpandHint": "展开「{{name}}」",
+    "treeCollapseHint": "折叠「{{name}}」",
+    "copyIdTitle": "复制完整容器 ID",
+    "copyIdFailed": "无法复制到剪贴板。",
+    "portsColumnTitle": "端口（本机:容器）",
+    "portsColumnHint": "每行一条映射：冒号左侧为本机（发布地址/端口），右侧为容器内端口/协议，中间以「 : 」分隔。本机为「—」表示仅镜像暴露、未映射到主机。",
+    "portsNone": "无端口映射或暴露",
+    "stateValues": {
+      "created": "已创建",
+      "restarting": "重启中",
+      "running": "运行中",
+      "removing": "删除中",
+      "paused": "已暂停",
+      "exited": "已退出",
+      "dead": "已死亡",
+      "other": "{{raw}}"
+    },
+    "statusPattern": {
+      "up": "运行中 · {{rest}}",
+      "upHealthy": "运行中 · {{rest}}（健康）",
+      "upUnhealthy": "运行中 · {{rest}}（不健康）",
+      "upHealthStarting": "运行中 · {{rest}}（健康检查启动中）",
+      "upPaused": "运行中 · {{rest}}（已暂停）",
+      "exited": "已退出（代码 {{code}}）{{tail}}",
+      "restarting": "重启中{{count}}{{tail}}",
+      "created": "已创建",
+      "dead": "已死亡",
+      "removing": "删除中",
+      "paused": "已暂停",
+      "fallback": "{{raw}}"
+    }
+  },
+  "images": {
+    "title": "镜像",
+    "tagSource": "打标签源",
+    "tagRepo": "仓库名",
+    "tagLabel": "标签",
+    "tagAction": "打标签",
+    "pull": "拉取",
+    "pullPlaceholder": "例如 nginx:latest",
+    "pulling": "拉取中…",
+    "remove": "删除",
+    "removeConfirm": "删除该镜像？"
+  },
+  "networks": {
+    "title": "网络",
+    "remove": "删除",
+    "removeConfirm": "删除该网络？"
+  },
+  "volumes": {
+    "title": "数据卷",
+    "removeConfirm": "删除该卷？数据将丢失。"
+  },
+  "events": {
+    "title": "Docker 事件",
+    "subtitle": "引擎事件流（JSON 行，已摘要显示）。",
+    "start": "订阅",
+    "stop": "停止订阅",
+    "clear": "清空",
+    "empty": "点击订阅以查看实时事件。"
+  },
+  "create": {
+    "title": "创建并启动容器",
+    "hint": "先 create 再 start。端口格式：主机:容器（如 8080:80）。命令按空格拆分为 argv；留空则使用镜像默认入口。",
+    "image": "镜像",
+    "name": "名称",
+    "namePlaceholder": "可选，小写字母数字等",
+    "publish": "端口映射",
+    "env": "环境变量（每行 KEY=VAL）",
+    "cmd": "覆盖命令（argv，空格分隔）",
+    "cmdPlaceholder": "例如 nginx -g daemon off;",
+    "autoRemove": "退出后自动删除容器",
+    "submit": "创建并启动"
+  },
+  "system": {
+    "title": "系统",
+    "info": "引擎信息",
+    "version": "版本",
+    "disk": "磁盘占用（docker system df）"
+  },
+  "logs": {
+    "title": "容器日志（实时）",
+    "hint": "在容器行或底部详情区域右键，可在独立窗口查看实时日志（窗口可拖离主界面）。",
+    "windowMissingId": "链接中缺少容器 ID，无法打开日志窗口。",
+    "start": "开始",
+    "stop": "停止",
+    "clear": "清空",
+    "tail": "尾部行数",
+    "timestamps": "显示时间戳"
+  }
+}
