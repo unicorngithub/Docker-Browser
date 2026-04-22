@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
 
@@ -15,6 +16,7 @@ function shortId(id: string): string {
 
 export function NetworksView() {
   const { t } = useTranslation()
+  const { alert, confirm } = useAppDialog()
   const networks = useDockerStore((s) => s.networks) as Row[]
   const busy = useDockerStore((s) => s.busy)
   const selectedNetworkId = useDockerStore((s) => s.selectedNetworkId)
@@ -28,13 +30,13 @@ export function NetworksView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      await alert(e instanceof Error ? e.message : String(e))
     }
   }
 
-  const onRemove = () => {
+  const onRemove = async () => {
     if (!sel) return
-    if (!window.confirm(t('networks.removeConfirm'))) return
+    if (!(await confirm(t('networks.removeConfirm')))) return
     void run(async () => {
       await unwrapIpc(window.dockerDesktop.removeNetwork(sel.Id))
       setSelectedNetworkId(null)
@@ -49,7 +51,7 @@ export function NetworksView() {
           <button
             type="button"
             disabled={!sel || busy}
-            onClick={onRemove}
+            onClick={() => void onRemove()}
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
             {t('networks.remove')}

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { inspectJsonToPublishText } from '@shared/inspectPorts'
+import { normalizeRestartPolicyName, type RestartPolicyName } from '@shared/restartPolicy'
+import { RestartPolicyField } from '@/components/RestartPolicyField'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 
 type Props = {
   open: boolean
@@ -11,12 +14,14 @@ type Props = {
 
 export function EditContainerConfigModal({ open, containerId, onClose, onRecreated }: Props) {
   const { t } = useTranslation()
+  const { alert, confirm } = useAppDialog()
   const [image, setImage] = useState('')
   const [name, setName] = useState('')
   const [envText, setEnvText] = useState('')
   const [publishText, setPublishText] = useState('')
   const [cmdText, setCmdText] = useState('')
   const [autoRemove, setAutoRemove] = useState(false)
+  const [restartPolicy, setRestartPolicy] = useState<RestartPolicyName>('no')
   const [loadErr, setLoadErr] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -40,15 +45,17 @@ export function EditContainerConfigModal({ open, containerId, onClose, onRecreat
       const cmd = cfg?.Cmd
       setCmdText(Array.isArray(cmd) ? (cmd as string[]).join(' ') : '')
       setAutoRemove(hc?.AutoRemove === true)
+      const rp = hc?.RestartPolicy as { Name?: string } | undefined
+      setRestartPolicy(normalizeRestartPolicyName(typeof rp?.Name === 'string' ? rp.Name : undefined))
     })
   }, [open, containerId])
 
   if (!open) return null
 
   const submit = async () => {
-    if (!window.confirm(t('containers.configRecreateConfirm'))) return
+    if (!(await confirm(t('containers.configRecreateConfirm')))) return
     if (!image.trim()) {
-      window.alert(t('containers.configImageRequired'))
+      await alert(t('containers.configImageRequired'))
       return
     }
     setSubmitting(true)
@@ -61,12 +68,13 @@ export function EditContainerConfigModal({ open, containerId, onClose, onRecreat
         publishText,
         cmdText: cmdText.trim() || undefined,
         autoRemove,
+        restartPolicy,
       })
       if (!res.ok) throw new Error(res.error)
       onRecreated(res.data.id)
       onClose()
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      await alert(e instanceof Error ? e.message : String(e))
     } finally {
       setSubmitting(false)
     }
@@ -84,7 +92,7 @@ export function EditContainerConfigModal({ open, containerId, onClose, onRecreat
         onClick={(e) => e.stopPropagation()}
       >
         <h2 id="edit-container-config-title" className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-          {t('containers.configTitle')}
+          {t('containers.configRecreateTitle')}
         </h2>
         <p className="mb-3 text-[11px] leading-relaxed text-amber-800 dark:text-amber-200/90">
           {t('containers.configHint')}
@@ -143,12 +151,21 @@ export function EditContainerConfigModal({ open, containerId, onClose, onRecreat
               className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
             />
           </label>
+          <RestartPolicyField
+            value={restartPolicy}
+            disabled={!!loadErr || autoRemove}
+            onChange={(v) => setRestartPolicy(v)}
+          />
           <label className="flex items-center gap-2 text-[11px] text-zinc-700 dark:text-zinc-300">
             <input
               type="checkbox"
               checked={autoRemove}
               disabled={!!loadErr}
-              onChange={(e) => setAutoRemove(e.target.checked)}
+              onChange={(e) => {
+                const on = e.target.checked
+                setAutoRemove(on)
+                if (on) setRestartPolicy('no')
+              }}
             />
             {t('create.autoRemove')}
           </label>

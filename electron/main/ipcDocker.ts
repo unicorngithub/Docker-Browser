@@ -6,6 +6,7 @@ import type { DockerLogsChunk } from '../../shared/dockerLogs'
 import { ipcErr, ipcOk, type IpcResult } from '../../shared/ipc'
 import { getDocker } from './dockerClient'
 import { demuxDockerLogStream } from './dockerLogDemux'
+import { normalizeRestartPolicyName, restartPolicyToDocker } from '../../shared/restartPolicy'
 import { parseEnvLines, parsePortPublish } from './dockerCreateHelpers'
 import { buildRecreateCreateOptions } from './dockerRecreateHelpers'
 
@@ -383,6 +384,7 @@ export function registerDockerIpc(): void {
         publishText?: string
         cmdText?: string
         autoRemove?: boolean
+        restartPolicy?: string
       }
       const image = typeof p.image === 'string' ? p.image.trim() : ''
       if (!image) return ipcErr('image is required')
@@ -398,6 +400,10 @@ export function registerDockerIpc(): void {
           ? p.name.trim().replace(/^\/+/, '').toLowerCase()
           : undefined
 
+      const restartPolicy = normalizeRestartPolicyName(
+        typeof p.restartPolicy === 'string' ? p.restartPolicy : 'no',
+      )
+
       try {
         const createOpts: ContainerCreateOptions = { Image: image }
         if (env.length) createOpts.Env = env
@@ -405,6 +411,8 @@ export function registerDockerIpc(): void {
 
         const hostConfig: HostConfig = {}
         if (p.autoRemove === true) hostConfig.AutoRemove = true
+        hostConfig.RestartPolicy =
+          p.autoRemove === true ? restartPolicyToDocker('no') : restartPolicyToDocker(restartPolicy)
         if (ports) {
           createOpts.ExposedPorts = ports.ExposedPorts
           Object.assign(hostConfig, ports.HostConfig)
@@ -431,6 +439,7 @@ export function registerDockerIpc(): void {
         publishText?: string
         cmdText?: string
         autoRemove?: boolean
+        restartPolicy?: string
       }
       const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
       const image = typeof p.image === 'string' ? p.image.trim() : ''
@@ -447,6 +456,7 @@ export function registerDockerIpc(): void {
           publishText: typeof p.publishText === 'string' ? p.publishText : '',
           cmdText: typeof p.cmdText === 'string' ? p.cmdText : undefined,
           autoRemove: p.autoRemove === true,
+          restartPolicy: typeof p.restartPolicy === 'string' ? p.restartPolicy : 'no',
         })
 
         if (ins.State.Paused) await old.unpause()
@@ -456,6 +466,61 @@ export function registerDockerIpc(): void {
         const created = await docker().createContainer(name ? { ...createOpts, name } : createOpts)
         await created.start()
         return ipcOk({ id: created.id })
+      } catch (e) {
+        return ipcErr(e instanceof Error ? e.message : String(e))
+      }
+    },
+  )
+
+  ipcMain.handle(
+    'docker:patch-container-runtime',
+    async (_evt, payload: unknown): Promise<IpcResult<void>> => {
+      const p = payload as { containerId?: string; name?: string; restartPolicy?: string }
+      const containerId = typeof p.containerId === 'string' ? p.containerId.trim() : ''
+      if (!containerId) return ipcErr('containerId is required')
+
+      try {
+        const c = docker().getContainer(containerId)
+        const ins = await c.inspect()
+
+        const newRp = normalizeRestartPolicyName(
+          typeof p.restartPolicy === 'string' ? p.restartPolicy : 'no',
+        )
+        if (ins.HostConfig?.AutoRemove === true && newRp !== 'no') {
+          return ipcErr(
+            'Auto-remove containers only support restart policy "no" (Docker engine limitation).',
+          )
+        }
+
+        const currentName = (typeof ins.Name === 'string' ? ins.Name.replace(/^\//, '') : '')
+          .trim()
+          .toLowerCase()
+        const raw = typeof p.name === 'string' ? p.name.trim().replace(/^\/+/, '') : ''
+        const targetName = raw === '' ? currentName : raw.toLowerCase()
+
+        const existingRp = normalizeRestartPolicyName(ins.HostConfig?.RestartPolicy?.Name)
+        const curPolicy = ins.HostConfig?.RestartPolicy as
+          | { Name?: string; MaximumRetryCount?: number }
+          | undefined
+        let restartChanged = existingRp !== newRp
+        if (!restartChanged && newRp === 'on-failure') {
+          const curCount =
+            typeof curPolicy?.MaximumRetryCount === 'number' ? curPolicy.MaximumRetryCount : 5
+          restartChanged = curCount !== 5
+        }
+
+        const nameChanged = targetName !== currentName
+
+        if (!nameChanged && !restartChanged) return ipcOk(undefined)
+
+        if (nameChanged) {
+          await c.rename({ name: targetName })
+        }
+        if (restartChanged) {
+          await c.update({ RestartPolicy: restartPolicyToDocker(newRp) })
+        }
+
+        return ipcOk(undefined)
       } catch (e) {
         return ipcErr(e instanceof Error ? e.message : String(e))
       }

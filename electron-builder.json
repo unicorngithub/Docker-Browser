@@ -5,10 +5,10 @@
   "asar": true,
   "directories": {
     "output": "release/${version}",
-    "buildResources": "build"
+    "buildResources": "public"
   },
   "files": ["dist-electron", "dist", "LICENSE"],
-  "icon": "build/icon.png",
+  "icon": "public/icon.png",
   "mac": {
     "artifactName": "Docker-Browser_${version}.${ext}",
     "target": ["dmg", "zip"]

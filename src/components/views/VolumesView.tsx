@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
 
@@ -10,6 +11,7 @@ type Row = {
 
 export function VolumesView() {
   const { t } = useTranslation()
+  const { alert, confirm } = useAppDialog()
   const volumeList = useDockerStore((s) => s.volumeList) as Row[]
   const busy = useDockerStore((s) => s.busy)
   const selectedVolumeName = useDockerStore((s) => s.selectedVolumeName)
@@ -23,13 +25,13 @@ export function VolumesView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      await alert(e instanceof Error ? e.message : String(e))
     }
   }
 
-  const onRemove = () => {
+  const onRemove = async () => {
     if (!sel) return
-    if (!window.confirm(t('volumes.removeConfirm'))) return
+    if (!(await confirm(t('volumes.removeConfirm')))) return
     void run(async () => {
       await unwrapIpc(window.dockerDesktop.removeVolume(sel.Name))
       setSelectedVolumeName(null)
@@ -44,7 +46,7 @@ export function VolumesView() {
           <button
             type="button"
             disabled={!sel || busy}
-            onClick={onRemove}
+            onClick={() => void onRemove()}
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
             {t('common.removeVol')}

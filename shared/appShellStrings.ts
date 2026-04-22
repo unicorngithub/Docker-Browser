@@ -10,15 +10,6 @@ export function interpolateTemplate(template: string, vars: Record<string, strin
   return s
 }
 
-export function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
 export type AppShellStrings = {
   file: string
   closeWindow: string
@@ -58,7 +49,8 @@ export type AppShellStrings = {
   macHideApp: string
   aboutPanelCopyright: string
   aboutDialogTitle: string
-  aboutWindowBodyHtml: string
+  /** 关于对话框正文（纯文本，支持 {{version}}、{{repoUrl}}） */
+  aboutDialogBodyPlain: string
   dialogOk: string
 }
 
@@ -100,8 +92,8 @@ const ZH: AppShellStrings = {
   macHideApp: '隐藏 {{appName}}',
   aboutPanelCopyright: "Copyright © Guo's\nMIT License — see LICENSE",
   aboutDialogTitle: '关于 Docker Browser',
-  aboutWindowBodyHtml:
-    '<p class="meta">版本 {{version}}</p><p>本地 Docker Engine 管理客户端。许可条款见 LICENSE。</p><p class="repo"><span class="repo-label">源代码仓库：</span><a href="{{repoUrl}}" class="repo-link">{{repoUrl}}</a></p>',
+  aboutDialogBodyPlain:
+    '版本 {{version}}\n\n本地 Docker Engine 管理客户端。\n许可条款见 LICENSE。\n\n{{repoUrl}}',
   dialogOk: '确定',
 }
 
@@ -143,8 +135,8 @@ const EN: AppShellStrings = {
   macHideApp: 'Hide {{appName}}',
   aboutPanelCopyright: "Copyright © Guo's\nMIT License — see LICENSE",
   aboutDialogTitle: 'About Docker Browser',
-  aboutWindowBodyHtml:
-    '<p class="meta">Version {{version}}</p><p>Desktop client for your local Docker Engine. Licensing terms are in LICENSE.</p><p class="repo"><span class="repo-label">Source repository: </span><a href="{{repoUrl}}" class="repo-link">{{repoUrl}}</a></p>',
+  aboutDialogBodyPlain:
+    'Version {{version}}\n\nDesktop client for your local Docker Engine.\nSee LICENSE for licensing.\n\n{{repoUrl}}',
   dialogOk: 'OK',
 }
 
@@ -152,10 +144,9 @@ export function getAppShellStrings(lng: AppLanguage): AppShellStrings {
   return lng === 'en' ? EN : ZH
 }
 
-export function formatAboutWindowBodyHtml(s: AppShellStrings, version: string): string {
-  const repo = DOCKER_BROWSER_REPOSITORY_URL
-  return interpolateTemplate(s.aboutWindowBodyHtml, {
-    version: escapeHtml(version),
-    repoUrl: repo,
+export function formatAboutDialogBodyPlain(s: AppShellStrings, version: string): string {
+  return interpolateTemplate(s.aboutDialogBodyPlain, {
+    version,
+    repoUrl: DOCKER_BROWSER_REPOSITORY_URL,
   })
 }

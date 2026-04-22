@@ -1,4 +1,5 @@
 import type { ContainerCreateOptions, ContainerInspectInfo, HostConfig } from 'dockerode'
+import { normalizeRestartPolicyName, restartPolicyToDocker } from '../../shared/restartPolicy'
 import { parseEnvLines, parsePortPublish } from './dockerCreateHelpers'
 
 export function buildRecreateCreateOptions(
@@ -10,6 +11,7 @@ export function buildRecreateCreateOptions(
     publishText: string
     cmdText?: string
     autoRemove: boolean
+    restartPolicy: string
   },
 ): { createOpts: ContainerCreateOptions; name?: string } {
   const image = input.image.trim()
@@ -24,6 +26,9 @@ export function buildRecreateCreateOptions(
   delete (oldHc as { PortBindings?: unknown }).PortBindings
   if (input.autoRemove === true) oldHc.AutoRemove = true
   else delete oldHc.AutoRemove
+
+  const rp = normalizeRestartPolicyName(input.restartPolicy)
+  oldHc.RestartPolicy = input.autoRemove === true ? restartPolicyToDocker('no') : restartPolicyToDocker(rp)
 
   if (ports) {
     oldHc.PortBindings = ports.HostConfig.PortBindings

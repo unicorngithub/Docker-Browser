@@ -64,6 +64,7 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
     publishText?: string
     cmdText?: string
     autoRemove?: boolean
+    restartPolicy?: string
   }): Promise<IpcResult<{ id: string }>> {
     return ipcRenderer.invoke('docker:create-run-container', payload)
   },
@@ -75,8 +76,16 @@ contextBridge.exposeInMainWorld('dockerDesktop', {
     publishText?: string
     cmdText?: string
     autoRemove?: boolean
+    restartPolicy?: string
   }): Promise<IpcResult<{ id: string }>> {
     return ipcRenderer.invoke('docker:recreate-container', payload)
+  },
+  patchContainerRuntime(payload: {
+    containerId: string
+    name?: string
+    restartPolicy?: string
+  }): Promise<IpcResult<void>> {
+    return ipcRenderer.invoke('docker:patch-container-runtime', payload)
   },
   tagImage(payload: { source: string; repo: string; tag?: string }): Promise<IpcResult<void>> {
     return ipcRenderer.invoke('docker:tag-image', payload)

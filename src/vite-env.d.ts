@@ -31,6 +31,7 @@ export interface DockerDesktopApi {
     publishText?: string
     cmdText?: string
     autoRemove?: boolean
+    restartPolicy?: string
   }): Promise<IpcResult<{ id: string }>>
   recreateContainer(payload: {
     containerId: string
@@ -40,7 +41,13 @@ export interface DockerDesktopApi {
     publishText?: string
     cmdText?: string
     autoRemove?: boolean
+    restartPolicy?: string
   }): Promise<IpcResult<{ id: string }>>
+  patchContainerRuntime(payload: {
+    containerId: string
+    name?: string
+    restartPolicy?: string
+  }): Promise<IpcResult<void>>
   tagImage(payload: { source: string; repo: string; tag?: string }): Promise<IpcResult<void>>
   execOnce(payload: { containerId: string; command: string }): Promise<
     IpcResult<{ output: string; exitCode?: number }>

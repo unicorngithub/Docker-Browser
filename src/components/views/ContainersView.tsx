@@ -2,6 +2,8 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CreateContainerModal } from '@/components/CreateContainerModal'
 import { EditContainerConfigModal } from '@/components/EditContainerConfigModal'
+import { EditContainerRuntimeModal } from '@/components/EditContainerRuntimeModal'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
 import { localizeContainerState, localizeContainerStatus } from '@/lib/containerDisplayI18n'
@@ -32,6 +34,7 @@ function displayName(c: Row): string {
 
 export function ContainersView() {
   const { t, i18n } = useTranslation()
+  const { alert, confirm } = useAppDialog()
   const [showCreate, setShowCreate] = useState(false)
   const [execCmd, setExecCmd] = useState('ls -la')
   const [execOut, setExecOut] = useState('')
@@ -40,7 +43,8 @@ export function ContainersView() {
   const [collapsedProjectKeys, setCollapsedProjectKeys] = useState<Set<string>>(() => new Set())
   const ctxMenuRef = useRef<HTMLDivElement>(null)
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; containerId: string } | null>(null)
-  const [configContainerId, setConfigContainerId] = useState<string | null>(null)
+  const [runtimeConfigContainerId, setRuntimeConfigContainerId] = useState<string | null>(null)
+  const [recreateConfigContainerId, setRecreateConfigContainerId] = useState<string | null>(null)
   const containers = useDockerStore((s) => s.containers) as Row[]
   const busy = useDockerStore((s) => s.busy)
   const selectedContainerId = useDockerStore((s) => s.selectedContainerId)
@@ -88,8 +92,8 @@ export function ContainersView() {
   }, [ctxMenu])
 
   const openLogsWindow = (containerId: string) => {
-    void window.dockerDesktop.openContainerLogsWindow(containerId).then((res) => {
-      if (!res.ok) window.alert(res.error)
+    void window.dockerDesktop.openContainerLogsWindow(containerId).then(async (res) => {
+      if (!res.ok) await alert(res.error)
     })
   }
 
@@ -98,13 +102,13 @@ export function ContainersView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      await alert(e instanceof Error ? e.message : String(e))
     }
   }
 
-  const onRemove = () => {
+  const onRemove = async () => {
     if (!sel) return
-    if (!window.confirm(t('containers.removeConfirm'))) return
+    if (!(await confirm(t('containers.removeConfirm')))) return
     const running = (sel.State ?? '').toLowerCase() === 'running'
     void run(async () => {
       await unwrapIpc(
@@ -146,10 +150,16 @@ export function ContainersView() {
         onClose={() => setShowCreate(false)}
         onCreated={() => void afterMutation()}
       />
+      <EditContainerRuntimeModal
+        open={runtimeConfigContainerId !== null}
+        containerId={runtimeConfigContainerId ?? ''}
+        onClose={() => setRuntimeConfigContainerId(null)}
+        onSaved={() => void afterMutation()}
+      />
       <EditContainerConfigModal
-        open={configContainerId !== null}
-        containerId={configContainerId ?? ''}
-        onClose={() => setConfigContainerId(null)}
+        open={recreateConfigContainerId !== null}
+        containerId={recreateConfigContainerId ?? ''}
+        onClose={() => setRecreateConfigContainerId(null)}
         onRecreated={(newId) => {
           setSelectedContainerId(newId)
           void afterMutation()
@@ -221,7 +231,7 @@ export function ContainersView() {
           <button
             type="button"
             disabled={!sel || busy}
-            onClick={onRemove}
+            onClick={() => void onRemove()}
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
             {t('containers.remove')}
@@ -339,7 +349,7 @@ export function ContainersView() {
                                 try {
                                   await navigator.clipboard.writeText(c.Id)
                                 } catch {
-                                  window.alert(t('containers.copyIdFailed'))
+                                  await alert(t('containers.copyIdFailed'))
                                 }
                               })()
                             }}
@@ -435,13 +445,26 @@ export function ContainersView() {
           <button
             type="button"
             role="menuitem"
+            title={t('containers.contextConfigInPlaceHint')}
             className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
             onClick={() => {
-              setConfigContainerId(ctxMenu.containerId)
+              setRuntimeConfigContainerId(ctxMenu.containerId)
               setCtxMenu(null)
             }}
           >
-            {t('containers.configMenu')}
+            {t('containers.contextConfigInPlace')}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            title={t('containers.contextConfigRecreateHint')}
+            className="block w-full px-3 py-2 text-left hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            onClick={() => {
+              setRecreateConfigContainerId(ctxMenu.containerId)
+              setCtxMenu(null)
+            }}
+          >
+            {t('containers.contextConfigRecreate')}
           </button>
           <button
             type="button"

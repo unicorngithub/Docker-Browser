@@ -5,6 +5,7 @@ import App from './App'
 import { ContainerLogsWindowApp } from './ContainerLogsWindowApp'
 import { LogWindowErrorView } from './LogWindowErrorView'
 import { parseLogWindowHash } from '@/lib/logWindowRoute'
+import { AppDialogProvider } from '@/dialog/AppDialogContext'
 import { ThemeProvider } from '@/theme/ThemeProvider'
 
 import './index.css'
@@ -21,6 +22,8 @@ if (route.mode === 'logs') {
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <ThemeProvider>{shell}</ThemeProvider>
+    <ThemeProvider>
+      <AppDialogProvider>{shell}</AppDialogProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 )

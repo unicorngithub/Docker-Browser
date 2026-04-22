@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 
 const MAX_LINES = 400
 
@@ -27,6 +28,7 @@ function formatEventLine(line: string): string {
 
 export function EventsView() {
   const { t } = useTranslation()
+  const { alert } = useAppDialog()
   const [lines, setLines] = useState<string[]>([])
   const [subId, setSubId] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -71,7 +73,7 @@ export function EventsView() {
     const sinceUnix = Math.floor(Date.now() / 1000) - 120
     const res = await window.dockerDesktop.startEvents({ sinceUnix })
     if (!res.ok) {
-      window.alert(res.error)
+      await alert(res.error)
       return
     }
     subRef.current = res.data.subscriptionId

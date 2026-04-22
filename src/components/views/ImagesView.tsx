@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useAppDialog } from '@/dialog/AppDialogContext'
 import { useDockerStore } from '@/stores/dockerStore'
 import { unwrapIpc } from '@/lib/ipc'
 
@@ -28,6 +29,7 @@ function formatBytes(n: number | undefined): string {
 
 export function ImagesView() {
   const { t } = useTranslation()
+  const { alert, confirm } = useAppDialog()
   const images = useDockerStore((s) => s.images) as Row[]
   const busy = useDockerStore((s) => s.busy)
   const selectedImageRef = useDockerStore((s) => s.selectedImageRef)
@@ -47,7 +49,7 @@ export function ImagesView() {
       await fn()
       await afterMutation()
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      await alert(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -64,9 +66,9 @@ export function ImagesView() {
     })
   }
 
-  const onRemove = () => {
+  const onRemove = async () => {
     if (!sel || !imageNameForApi) return
-    if (!window.confirm(t('images.removeConfirm'))) return
+    if (!(await confirm(t('images.removeConfirm')))) return
     void run(async () => {
       await unwrapIpc(window.dockerDesktop.removeImage({ name: imageNameForApi, force: false }))
       setSelectedImageRef(null)
@@ -115,7 +117,7 @@ export function ImagesView() {
           <button
             type="button"
             disabled={!sel || busy}
-            onClick={onRemove}
+            onClick={() => void onRemove()}
             className="rounded-md border border-rose-400 px-2 py-1 text-[11px] text-rose-800 dark:border-rose-800 dark:text-rose-200"
           >
             {t('images.remove')}

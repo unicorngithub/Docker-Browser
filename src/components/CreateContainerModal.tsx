@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { unwrapIpc } from '@/lib/ipc'
+import { RestartPolicyField } from '@/components/RestartPolicyField'
+import { useAppDialog } from '@/dialog/AppDialogContext'
+import type { RestartPolicyName } from '@shared/restartPolicy'
 
 type Props = {
   open: boolean
@@ -10,12 +12,14 @@ type Props = {
 
 export function CreateContainerModal({ open, onClose, onCreated }: Props) {
   const { t } = useTranslation()
+  const { alert } = useAppDialog()
   const [image, setImage] = useState('nginx:alpine')
   const [name, setName] = useState('')
   const [envText, setEnvText] = useState('')
   const [publishText, setPublishText] = useState('')
   const [cmdText, setCmdText] = useState('')
   const [autoRemove, setAutoRemove] = useState(false)
+  const [restartPolicy, setRestartPolicy] = useState<RestartPolicyName>('no')
   const [submitting, setSubmitting] = useState(false)
 
   if (!open) return null
@@ -30,12 +34,13 @@ export function CreateContainerModal({ open, onClose, onCreated }: Props) {
         publishText,
         cmdText: cmdText.trim() || undefined,
         autoRemove,
+        restartPolicy,
       })
       if (!res.ok) throw new Error(res.error)
       onCreated()
       onClose()
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e))
+      await alert(e instanceof Error ? e.message : String(e))
     } finally {
       setSubmitting(false)
     }
@@ -103,8 +108,21 @@ export function CreateContainerModal({ open, onClose, onCreated }: Props) {
               className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-2 py-1.5 font-mono text-[11px] dark:border-zinc-600 dark:bg-zinc-950"
             />
           </label>
+          <RestartPolicyField
+            value={restartPolicy}
+            disabled={autoRemove}
+            onChange={(v) => setRestartPolicy(v)}
+          />
           <label className="flex items-center gap-2 text-[11px] text-zinc-700 dark:text-zinc-300">
-            <input type="checkbox" checked={autoRemove} onChange={(e) => setAutoRemove(e.target.checked)} />
+            <input
+              type="checkbox"
+              checked={autoRemove}
+              onChange={(e) => {
+                const on = e.target.checked
+                setAutoRemove(on)
+                if (on) setRestartPolicy('no')
+              }}
+            />
             {t('create.autoRemove')}
           </label>
         </div>
